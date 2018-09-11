@@ -187,7 +187,7 @@ class RandomCropFixedSize(iaa.Augmenter):
             raise NotImplementedError
 
     def _augment_images(self, images, random_state, parents, hooks):
-        pdb.set_trace()
+        #pdb.set_trace()
         result = []
         seeds = random_state.randint(0, 10 ** 6, (len(images),))
         for i, image in enumerate(images):
@@ -270,43 +270,30 @@ class InferencePad(iaa.Augmenter):
 
     def get_parameters(self):
         return [self.divisor, self.pad_mode]
+import os
 import settings
 from PIL import Image, ImageDraw
 def test_augment():
-    imgs = ['d:\\kaggle\\data\\salt\\train\\images\\000e218f21.png',
-        'd:\\kaggle\\data\\salt\\train\\images\\003c477d7c.png',
-        'd:\\kaggle\\data\\salt\\train\\images\\00441f1cf2.png',
-        'd:\\kaggle\\data\\salt\\train\\images\\0050766ae2.png',
-        'd:\\kaggle\\data\\salt\\train\\images\\005b452274.png']
-    masks = ['d:\\kaggle\\data\\salt\\train\\masks\\000e218f21.png',
-        'd:\\kaggle\\data\\salt\\train\\masks\\003c477d7c.png',
-        'd:\\kaggle\\data\\salt\\train\\masks\\00441f1cf2.png',
-        'd:\\kaggle\\data\\salt\\train\\masks\\0050766ae2.png',
-        'd:\\kaggle\\data\\salt\\train\\masks\\005b452274.png']
-    img = imgs[1]
-    mask = masks[1]
+    img = os.path.join(settings.TRAIN_IMG_DIR, '003c477d7c.png')
+    mask = os.path.join(settings.TRAIN_MASK_DIR, '003c477d7c.png')
     img = Image.open(img)
     img = img.convert('RGB')
     mask = Image.open(mask)
     mask = mask.convert('L').point(lambda x: 0 if x < 128 else 255, '1')
-
-    img = from_pil(img)
+    print(type(mask))
     mask = from_pil(mask)
-    print(mask)
-    m1, m2 = [to_pil(mask == class_nr) for class_nr in [0, 1]]
-    m1, m2 = from_pil(m1, m2)
+    Mi = [to_pil(mask == class_nr) for class_nr in [0, 1]]
+    img, *Mi = from_pil(img, *Mi)
 
-    print(m1, m2)
-    
     aug = ImgAug(crop_seq(crop_size=(settings.H, settings.W), pad_size=(32,32), pad_method='reflect'))
-    img, m1, m2 = aug(img, m1, m2)
+    img, *Mi = aug(img, *Mi)
     
-    img, m1, m2 = to_pil(img, m1*255, m2*255)
+    img, *Mi = to_pil(img, Mi[0]*255, Mi[1]*255)
     ImageDraw.Draw(img)
-    ImageDraw.Draw(m1)
-    ImageDraw.Draw(m2)
+    ImageDraw.Draw(Mi[0])
+    ImageDraw.Draw(Mi[1])
     img.show()
-    m1.show()
-    m2.show()
+    Mi[0].show()
+    Mi[1].show()
 if __name__ == '__main__':
     test_augment()

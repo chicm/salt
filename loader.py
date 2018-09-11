@@ -6,14 +6,21 @@ import torch
 import torch.utils.data as data
 from torchvision import datasets, models, transforms
 from settings import *
-from utils import get_train_split
+from utils import get_train_split, ImgAug, from_pil, to_pil
 import augmentation as aug
 
 import pdb
 
 class ImageDataset(data.Dataset):
     def __init__(self, train_mode, meta):
-        self.augment_with_target = aug.crop_seq(crop_size=(H, W), pad_size=(32,32), pad_method='reflect')
+        self.augment_with_target = ImgAug(aug.crop_seq(crop_size=(H, W), pad_size=(32,32), pad_method='reflect'))
+        self.image_augment = ImgAug()
+        self.image_transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        ])
+        self.mask_transform = None #transforms.Compose([transforms.ToTensor()])
+
         self.train_mode = train_mode
     
         self.img_ids = meta[ID_COLUMN].values
@@ -41,12 +48,29 @@ class ImageDataset(data.Dataset):
         else:
             return [img]
 
-    def img_augment(self, img, mask):
+    def aug_image(self, img, mask):
         if mask is not None:
-            img, mask = self.augment_with_target(img, mask)
-            return img, mask
+            Mi = from_pil(mask)
+            Mi = [to_pil(Mi == class_nr) for class_nr in [0, 1]]
+            
+            Xi, *Mi = from_pil(img, *Mi)
+            Xi, *Mi = self.augment_with_target(Xi, *Mi)
+
+            if self.mask_transform is not None:
+                Mi = [self.mask_transform(m) for m in Mi]
+
+            if self.image_transform is not None:
+                Xi = self.image_transform(Xi)
+
+            return Xi, torch.cat(Mi, dim=0)
         else:
-            return img
+            Xi = from_pil(img)
+            Xi = self.image_augment(Xi)
+            Xi = to_pil(Xi)
+
+            if self.image_transform is not None:
+                Xi = self.image_transform(Xi)
+            return Xi
 
     def load_image(self, img_filepath, grayscale=False):
         image = Image.open(img_filepath, 'r')
