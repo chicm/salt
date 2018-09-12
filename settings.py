@@ -1,6 +1,6 @@
 import os
 
-DATA_DIR = r'D:\kaggle\data\salt'
+DATA_DIR = r'D:\data\salt'
 
 TRAIN_DIR = os.path.join(DATA_DIR, 'train')
 TEST_DIR = os.path.join(DATA_DIR, 'test')
@@ -12,6 +12,8 @@ TEST_IMG_DIR = os.path.join(TEST_DIR, 'images')
 LABEL_FILE = os.path.join(DATA_DIR, 'train.csv')
 DEPTHS_FILE = os.path.join(DATA_DIR, 'depths.csv')
 META_FILE = os.path.join(DATA_DIR, 'meta.csv')
+
+MODEL_DIR = 'models'
 
 ID_COLUMN = 'id'
 DEPTH_COLUMN = 'z'

@@ -1,6 +1,10 @@
+import os
 import pandas as pd
+import torch
+import torch.nn as nn
 import settings
 import utils
+from unet_models import UNetResNet
 
 def prepare_metadata():
     print('creating metadata')
@@ -9,6 +13,19 @@ def prepare_metadata():
                                    depths_filepath=settings.DEPTHS_FILE
                                    )
     meta.to_csv(settings.META_FILE, index=None)
+
+def convert_model():
+    model = UNetResNet(152, 2, pretrained=True, is_deconv=True)
+    model = nn.DataParallel(model)
+    old_model_file = os.path.join(settings.MODEL_DIR, 'old', '152', 'best_814_elu.pth')
+    new_model_file = os.path.join(settings.MODEL_DIR, '152', 'best_814_elu.pth')
+    
+    print(f'loading... {old_model_file}')
+    model.load_state_dict(torch.load(old_model_file))
+    
+    print(f'saving... {new_model_file}')
+    torch.save(model.module.state_dict(), new_model_file)
+
 
 def test():
     meta = pd.read_csv(settings.META_FILE)
@@ -28,4 +45,5 @@ def test():
 
 if __name__ == '__main__':
     #prepare_metadata()
-    test()
+    #test()
+    convert_model()

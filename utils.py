@@ -73,7 +73,7 @@ def encode_rle(predictions):
 
 def read_masks(masks_filepaths):
     masks = []
-    for mask_filepath in tqdm(masks_filepaths):
+    for mask_filepath in masks_filepaths:
         mask = Image.open(mask_filepath)
         mask = np.asarray(mask.convert('L').point(lambda x: 0 if x < 128 else 1)).astype(np.uint8)
         masks.append(mask)
@@ -382,6 +382,12 @@ def get_train_split():
     meta_train_split, meta_valid_split = meta_train.iloc[train_idx], meta_train.iloc[valid_idx]
     return meta_train_split, meta_valid_split
 
+def get_test_meta():
+    meta = pd.read_csv(settings.META_FILE)
+    test_meta = meta[meta['is_train'] == 0]
+    print(len(test_meta.values))
+    return test_meta
+
 def plot_list(images=[], labels=[]):
     n_img = len(images)
     n_lab = len(labels)
@@ -403,3 +409,6 @@ def clean_object_from_memory(obj):
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
+
+if __name__ == '__main__':
+    get_test_meta()

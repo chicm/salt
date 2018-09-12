@@ -3,42 +3,39 @@ import torch.optim as optim
 import torch.nn.functional as F
 
 import settings
-from loader import get_train_loaders
+from loader import get_test_loader
 from unet_models import UNetResNet
-from lovasz_losses import lovasz_hinge
 from postprocessing import crop_image, binarize
 from metrics import intersection_over_union, intersection_over_union_thresholds
+from utils import create_submission
 
-batch_size = 8
+batch_size = 32
 CKP = 'models/152/best_814_elu.pth'
 
-def train():
+def predict():
     model = UNetResNet(152, 2, pretrained=True, is_deconv=True)
     model.load_state_dict(torch.load(CKP))
     model = model.cuda()
 
-    criterion = lovasz_hinge 
-    optimizer = optim.Adam(model.parameters(), lr=0.00001)
+    test_loader = get_test_loader(batch_size)
 
-    train_loader, val_loader = get_train_loaders(batch_size, dev_mode=False)
-    validate(model, val_loader, criterion)
+    model.eval()
+    print('predicting...')
+    outputs = []
+    with torch.no_grad():
+        for i, img in enumerate(test_loader):
+            img = img.cuda()
+            output = torch.sigmoid(model(img))
 
-    for epoch in range(10):
-        train_loss = 0
-        for batch_idx, data in enumerate(train_loader):
-            img, mask = data
-            img, mask = img.cuda(), mask.cuda()
-            optimizer.zero_grad()
-            output = model(img)
-            loss = criterion(output, mask)
-            loss.backward()
-            optimizer.step()
+            for o in output.cpu().numpy():
+                outputs.append(o)
+            print(f'{batch_size*(i+1)} / {test_loader.num}', end='\r')
 
-            train_loss += loss.item()
-            print(f'epoch: {epoch} {batch_size*(batch_idx+1)}/{train_loader.num} batch loss: {loss.item() : .4f}, avg loss: {train_loss/(batch_idx+1) : .4f}', end='\r')
-        print('\n')
+    y_pred_test = generate_preds(outputs, (settings.ORIG_H, settings.ORIG_W))
 
-        validate(model, val_loader, criterion)
+    submission = create_submission(test_loader.meta, y_pred_test)
+    submission_filepath = 'sub2.csv'
+    submission.to_csv(submission_filepath, index=None, encoding='utf-8')
 
 def validate(model, val_loader, criterion):
     model.eval()
@@ -52,7 +49,7 @@ def validate(model, val_loader, criterion):
 
             loss = criterion(output, target)
             val_loss += loss.item()
-            output = torch.sigmoid(output)
+
             for o in output.cpu().numpy():
                 outputs.append(o)
     model.train()
@@ -78,4 +75,4 @@ def generate_preds(outputs, target_size):
     return preds
 
 if __name__ == '__main__':
-    train()
+    predict()
