@@ -6,7 +6,7 @@ import torch
 import torch.utils.data as data
 from torchvision import datasets, models, transforms
 from settings import *
-from utils import get_train_split, ImgAug, from_pil, to_pil, read_masks, get_test_meta
+from utils import get_train_split, ImgAug, from_pil, to_pil, read_masks, get_test_meta, get_nfold_split
 import augmentation as aug
 
 import pdb
@@ -115,9 +115,10 @@ image_transform = transforms.Compose([transforms.Grayscale(num_output_channels=3
 mask_transform = transforms.Compose([transforms.Lambda(to_array),
                                          transforms.Lambda(to_tensor),
                                     ])
-
-def get_train_loaders(batch_size=8, dev_mode=False):
-    train_meta, val_meta = get_train_split()
+#import pdb
+def get_train_loaders(ifold, batch_size=8, dev_mode=False):
+    #pdb.set_trace()
+    train_meta, val_meta = get_nfold_split(ifold, nfold=10)
     if dev_mode:
         train_meta = train_meta.iloc[:10]
         val_meta = val_meta.iloc[:10]
@@ -130,7 +131,7 @@ def get_train_loaders(batch_size=8, dev_mode=False):
                             image_transform=image_transform,
                             mask_transform=mask_transform)
 
-    train_loader = data.DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=4, collate_fn=train_set.collate_fn)
+    train_loader = data.DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=4, collate_fn=train_set.collate_fn, drop_last=True)
     train_loader.num = len(train_set)
 
     val_set = ImageDataset(True, val_meta,
@@ -155,7 +156,7 @@ def get_test_loader(batch_size=16):
     return test_loader
 
 def test_train_loader():
-    train_loader, val_loader = get_train_loaders(batch_size=4, dev_mode=True)
+    train_loader, val_loader = get_train_loaders(0, batch_size=4, dev_mode=True)
     print(train_loader.num, val_loader.num)
     for i, data in enumerate(train_loader):
         imgs, masks = data

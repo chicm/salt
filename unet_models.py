@@ -407,10 +407,16 @@ class UNetResNet(nn.Module):
         dec0 = self.dec0(dec1)
 
         return self.final(F.dropout2d(dec0, p=self.dropout_2d))
-
+    
+    def freeze_bn(self):
+        '''Freeze BatchNorm layers.'''
+        for layer in self.modules():
+            if isinstance(layer, nn.BatchNorm2d):
+                layer.eval()
 
 def test():
     model = UNetResNet(50, 2, pretrained=True, is_deconv=True).cuda()
+    model.freeze_bn()
     inputs = torch.randn(2,3,128,128).cuda()
     out = model(inputs)
     print(out.size())

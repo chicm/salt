@@ -1,4 +1,3 @@
-import logging
 import os
 import pathlib
 import random
@@ -15,9 +14,9 @@ import matplotlib.pyplot as plt
 from attrdict import AttrDict
 from tqdm import tqdm
 from pycocotools import mask as cocomask
-from sklearn.model_selection import BaseCrossValidator
-from steppy.base import BaseTransformer
-from steppy.utils import get_logger
+from sklearn.model_selection import BaseCrossValidator, KFold
+#from steppy.base import BaseTransformer
+#from steppy.utils import get_logger
 import yaml
 from imgaug import augmenters as iaa
 import imgaug as ia
@@ -25,6 +24,7 @@ import torch
 
 import settings
 
+'''
 NEPTUNE_CONFIG_PATH = str(pathlib.Path(__file__).resolve().parents[1] / 'neptune.yaml')
 logger = get_logger()
 
@@ -55,7 +55,7 @@ def init_logger():
 
 def get_logger():
     return logging.getLogger('salt-detection')
-
+'''
 
 def create_submission(meta, predictions):
     output = []
@@ -382,6 +382,19 @@ def get_train_split():
     meta_train_split, meta_valid_split = meta_train.iloc[train_idx], meta_train.iloc[valid_idx]
     return meta_train_split, meta_valid_split
 
+def get_nfold_split(ifold, nfold=10):
+    meta = pd.read_csv(settings.META_FILE)
+    meta_train = meta[meta['is_train'] == 1]
+
+    kf = KFold(n_splits=nfold)
+    for i, (train_index, valid_index) in enumerate(kf.split(meta_train[settings.ID_COLUMN].values.reshape(-1))):
+        if i == ifold:
+            break
+    #print(train_index[:10], train_index[-10:])
+    #print(valid_index[:10], valid_index[-10:])
+
+    return meta_train.iloc[train_index], meta_train.iloc[valid_index]
+
 def get_test_meta():
     meta = pd.read_csv(settings.META_FILE)
     test_meta = meta[meta['is_train'] == 0]
@@ -411,4 +424,5 @@ def clean_object_from_memory(obj):
         torch.cuda.empty_cache()
 
 if __name__ == '__main__':
-    get_test_meta()
+    #get_test_meta()
+    get_nfold_split(2)
