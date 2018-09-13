@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 import torch.optim as optim
 import torch.nn.functional as F
@@ -9,7 +10,7 @@ from postprocessing import crop_image, binarize
 from metrics import intersection_over_union, intersection_over_union_thresholds
 from utils import create_submission
 
-batch_size = 32
+batch_size = 64
 CKP = 'models/152/best_814_elu.pth'
 
 def predict():
@@ -37,32 +38,39 @@ def predict():
     submission_filepath = 'sub2.csv'
     submission.to_csv(submission_filepath, index=None, encoding='utf-8')
 
-def validate(model, val_loader, criterion):
-    model.eval()
-    print('validating...')
-    outputs = []
-    val_loss = 0
-    with torch.no_grad():
-        for img, target in val_loader:
-            img, target = img.cuda(), target.cuda()
-            output = model(img)
+def ensemble(checkpoints):
+    model = UNetResNet(152, 2, pretrained=True, is_deconv=True)
 
-            loss = criterion(output, target)
-            val_loss += loss.item()
+    preds = []
+    for checkpoint in checkpoints:
+        model.load_state_dict(torch.load(checkpoint))
+        model = model.cuda()
 
-            for o in output.cpu().numpy():
-                outputs.append(o)
-    model.train()
+        test_loader = get_test_loader(batch_size)
 
-    n_batches = val_loader.num // batch_size if val_loader.num % batch_size == 0 else val_loader.num // batch_size + 1
+        model.eval()
+        print('predicting {}...'.format(checkpoint))
+        outputs = []
+        with torch.no_grad():
+            for i, img in enumerate(test_loader):
+                img = img.cuda()
+                output = torch.sigmoid(model(img))
 
-    y_pred = generate_preds(outputs, (settings.ORIG_H, settings.ORIG_W))
-    print(f'Validation loss: {val_loss/n_batches: .4f}')
-    # y_true, list of 400 np array, each np array's shape is 101,101
-    iou_score = intersection_over_union(val_loader.y_true, y_pred)
-    iout_score = intersection_over_union_thresholds(val_loader.y_true, y_pred)
-    print(f'IOU score on validation is {iou_score:.4f}')
-    print(f'IOUT score on validation is {iout_score:.4f}')
+                for o in output.cpu().numpy():
+                    outputs.append(o)
+                print(f'{batch_size*(i+1)} / {test_loader.num}', end='\r')
+        preds.append(np.array(outputs))
+    
+    tmp = np.mean(preds, 0)
+    tmp2 = []
+    for i in range(len(tmp)):
+        tmp2.append(tmp[i])
+
+    y_pred_test = generate_preds(tmp2, (settings.ORIG_H, settings.ORIG_W))
+
+    submission = create_submission(test_loader.meta, y_pred_test)
+    submission_filepath = 'ensemble1.csv'
+    submission.to_csv(submission_filepath, index=None, encoding='utf-8')
 
 def generate_preds(outputs, target_size):
     preds = []
@@ -75,4 +83,7 @@ def generate_preds(outputs, target_size):
     return preds
 
 if __name__ == '__main__':
-    predict()
+    checkpoints = [r'G:\salt\models\152\best_0.pth', r'G:\salt\models\152\best_1.pth',
+        r'G:\salt\models\152\best_2.pth', r'G:\salt\models\152\best_3.pth', r'G:\salt\models\152\best_4.pth',]
+    #predict()
+    ensemble(checkpoints)
