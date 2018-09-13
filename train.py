@@ -16,7 +16,7 @@ from postprocessing import crop_image, binarize
 from metrics import intersection_over_union, intersection_over_union_thresholds
 
 epochs = 200
-batch_size = 16
+batch_size = 8
 MODEL_DIR = settings.MODEL_DIR
 CKP = 'models/152/best_814_elu.pth'
 
@@ -46,19 +46,21 @@ def train(args):
     model = model.cuda()
 
     criterion = lovasz_hinge 
-    optimizer = optim.Adam(model.parameters(), lr=args.lr)
+    optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=0.0001)
 
     train_loader, val_loader = get_train_loaders(args.ifold, batch_size=batch_size, dev_mode=False)
     #validate(model, val_loader, criterion)
-    lr_scheduler = CyclicExponentialLR(optimizer, 0.9) # ExponentialLR(optimizer, 0.9, last_epoch=-1) #CosineAnnealingLR(optimizer, 15, 1e-7) 
+    # CyclicExponentialLR(optimizer, 0.9, init_lr=args.lr)
+    lr_scheduler = CyclicExponentialLR(optimizer, 0.9, init_lr=args.lr) #ExponentialLR(optimizer, 0.9, last_epoch=-1) #CosineAnnealingLR(optimizer, 15, 1e-7) 
 
     best_iout = 0
 
-    for epoch in range(epochs):
+    for epoch in range(args.start_epoch, epochs):
         lr_scheduler.step()
         train_loss = 0
         model.train()
-        model.freeze_bn()
+        if epoch < 5:
+            model.freeze_bn()
         current_lr = optimizer.state_dict()['param_groups'][0]['lr']
         print('lr:', current_lr)
         bg = time.time()
@@ -137,6 +139,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Salt segmentation')
     parser.add_argument('--lr', default=0.0001, type=float, help='learning rate')
     parser.add_argument('--ifold', default=0, type=int, help='kfold index')
+    parser.add_argument('--start_epoch', default=0, type=int, help='start epoch')
     parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')
     args = parser.parse_args()
 
