@@ -1,6 +1,6 @@
 import os
 
-DATA_DIR = r'G:\salt'
+DATA_DIR = r'D:\data\salt'
 
 TRAIN_DIR = os.path.join(DATA_DIR, 'train')
 TEST_DIR = os.path.join(DATA_DIR, 'test')
@@ -13,7 +13,7 @@ LABEL_FILE = os.path.join(DATA_DIR, 'train.csv')
 DEPTHS_FILE = os.path.join(DATA_DIR, 'depths.csv')
 META_FILE = os.path.join(DATA_DIR, 'meta.csv')
 
-MODEL_DIR = 'models'
+MODEL_DIR = os.path.join(DATA_DIR, 'models')
 
 ID_COLUMN = 'id'
 DEPTH_COLUMN = 'z'

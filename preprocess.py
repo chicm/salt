@@ -20,10 +20,10 @@ def convert_model():
     old_model_file = os.path.join(settings.MODEL_DIR, 'old', '152', 'best_814_elu.pth')
     new_model_file = os.path.join(settings.MODEL_DIR, '152', 'best_814_elu.pth')
     
-    print(f'loading... {old_model_file}')
+    print('loading... {}'.format(old_model_file))
     model.load_state_dict(torch.load(old_model_file))
     
-    print(f'saving... {new_model_file}')
+    print('saving... {}'.format(new_model_file))
     torch.save(model.module.state_dict(), new_model_file)
 
 
@@ -44,6 +44,6 @@ def test():
     print(meta_train_split[settings.X_COLUMN].values[:10])
 
 if __name__ == '__main__':
-    #prepare_metadata()
+    prepare_metadata()
     #test()
-    convert_model()
+    #convert_model()

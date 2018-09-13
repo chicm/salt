@@ -1,3 +1,4 @@
+import os
 import argparse
 import logging as log
 import time
@@ -5,7 +6,7 @@ import time
 import torch
 import torch.optim as optim
 import torch.nn.functional as F
-from torch.optim.lr_scheduler import ExponentialLR, CosineAnnealingLR
+from torch.optim.lr_scheduler import ExponentialLR, CosineAnnealingLR, _LRScheduler
 import pdb
 import settings
 from loader import get_train_loaders
@@ -16,12 +17,32 @@ from metrics import intersection_over_union, intersection_over_union_thresholds
 
 epochs = 200
 batch_size = 16
+MODEL_DIR = settings.MODEL_DIR
 CKP = 'models/152/best_814_elu.pth'
+
+class CyclicExponentialLR(_LRScheduler):
+    def __init__(self, optimizer, gamma, init_lr=0.00015, min_lr=1e-7, restart_max_lr=1e-5, last_epoch=-1):
+        self.gamma = gamma
+        self.last_lr = init_lr
+        self.min_lr = min_lr
+        self.restart_max_lr = restart_max_lr
+        super(CyclicExponentialLR, self).__init__(optimizer, last_epoch)
+
+    def get_lr(self):
+        lr = self.last_lr * self.gamma
+        if lr < self.min_lr:
+            lr = self.restart_max_lr
+        self.last_lr = lr
+        return [lr]*len(self.base_lrs)
 
 def train(args):
     print('start training...')
+    model_file = '{}/152/best_{}.pth'.format(MODEL_DIR, args.ifold)
+
     model = UNetResNet(152, 2, pretrained=True, is_deconv=True)
-    #model.load_state_dict(torch.load(CKP))
+    if os.path.exists(model_file):
+        print('loading {}...'.format(model_file))
+        model.load_state_dict(torch.load(model_file))
     model = model.cuda()
 
     criterion = lovasz_hinge 
@@ -29,7 +50,7 @@ def train(args):
 
     train_loader, val_loader = get_train_loaders(args.ifold, batch_size=batch_size, dev_mode=False)
     #validate(model, val_loader, criterion)
-    lr_scheduler = CosineAnnealingLR(optimizer, 15, 1e-7) #ExponentialLR(optimizer, 0.9, last_epoch=-1)
+    lr_scheduler = CyclicExponentialLR(optimizer, 0.9) # ExponentialLR(optimizer, 0.9, last_epoch=-1) #CosineAnnealingLR(optimizer, 15, 1e-7) 
 
     best_iout = 0
 
@@ -39,7 +60,7 @@ def train(args):
         model.train()
         model.freeze_bn()
         current_lr = optimizer.state_dict()['param_groups'][0]['lr']
-        print(f'lr:{current_lr}')
+        print('lr:', current_lr)
         bg = time.time()
         for batch_idx, data in enumerate(train_loader):
             img, target = data
@@ -51,17 +72,19 @@ def train(args):
             optimizer.step()
 
             train_loss += loss.item()
-            print(f'epoch {epoch}: {batch_size*(batch_idx+1)}/{train_loader.num} batch loss: {loss.item() : .4f}, avg loss: {train_loss/(batch_idx+1) : .4f} lr: {current_lr: .7f}', end='\r')
+            print('epoch {}: {}/{} batch loss: {:.4f}, avg loss: {:.4f} lr: {:.7f}'
+                .format(epoch, batch_size*(batch_idx+1), train_loader.num, loss.item(), train_loss/(batch_idx+1), current_lr), end='\r')
         print('\n')
-        print(f'epoch {epoch}: {(time.time() - bg) / 60: .2f} minutes')
+        print('epoch {}: {:.2f} minutes'.format(epoch, (time.time() - bg) / 60))
 
         iout, iou, val_loss = validate(model, val_loader, criterion)
 
         if iout > best_iout:
             best_iout = iout
-            torch.save(model.state_dict(), f'models/152/best_{args.ifold}.pth')
+            torch.save(model.state_dict(), model_file)
 
-        log.info(f'epoch {epoch}: train loss: {train_loss: .4f} val loss: {val_loss: .4f} iout: {iout: .4f} best iout: {best_iout: .4f} iou: {iou: .4f} lr: {current_lr: .7f}')
+        log.info('epoch {}: train loss: {:.4f} val loss: {:.4f} iout: {:.4f} best iout: {:.4f} iou: {:.4f} lr: {:.7f}'
+            .format(epoch, train_loss, val_loss, iout, best_iout, iou, current_lr))
         
 
 def validate(model, val_loader, criterion):
@@ -84,12 +107,12 @@ def validate(model, val_loader, criterion):
 
     # y_pred, list of 400 np array, each np array's shape is 101,101
     y_pred = generate_preds(outputs, (settings.ORIG_H, settings.ORIG_W))
-    print(f'Validation loss: {val_loss/n_batches: .4f}')
+    print('Validation loss: {:.4f}'.format(val_loss/n_batches))
 
     iou_score = intersection_over_union(val_loader.y_true, y_pred)
     iout_score = intersection_over_union_thresholds(val_loader.y_true, y_pred)
-    print(f'IOU score on validation is {iou_score:.4f}')
-    print(f'IOUT score on validation is {iout_score:.4f}')
+    print('IOU score on validation is {:.4f}'.format(iou_score))
+    print('IOUT score on validation is {:.4f}'.format(iout_score))
 
     return iout_score, iou_score, val_loss / n_batches
 

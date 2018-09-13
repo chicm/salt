@@ -10,7 +10,7 @@ import gc
 import numpy as np
 import pandas as pd
 from PIL import Image
-import matplotlib.pyplot as plt
+#import matplotlib.pyplot as plt
 from attrdict import AttrDict
 from tqdm import tqdm
 from pycocotools import mask as cocomask
@@ -401,6 +401,7 @@ def get_test_meta():
     print(len(test_meta.values))
     return test_meta
 
+'''
 def plot_list(images=[], labels=[]):
     n_img = len(images)
     n_lab = len(labels)
@@ -415,7 +416,7 @@ def plot_list(images=[], labels=[]):
         axs[n_img + j].set_xticks([])
         axs[n_img + j].set_yticks([])
     plt.show()
-
+'''
 
 def clean_object_from_memory(obj):
     del obj
