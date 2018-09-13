@@ -14,6 +14,8 @@ from unet_models import UNetResNet
 from lovasz_losses import lovasz_hinge
 from postprocessing import crop_image, binarize
 from metrics import intersection_over_union, intersection_over_union_thresholds
+import nni
+
 
 epochs = 200
 batch_size = 8
@@ -35,7 +37,7 @@ class CyclicExponentialLR(_LRScheduler):
         self.last_lr = lr
         return [lr]*len(self.base_lrs)
 
-def train(args):
+def train(args, nni_params):
     print('start training...')
     model_file = '{}/152/best_{}.pth'.format(MODEL_DIR, args.ifold)
 
@@ -46,7 +48,7 @@ def train(args):
     model = model.cuda()
 
     criterion = lovasz_hinge 
-    optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=0.0001)
+    optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=nni_params['weight_decay'])
 
     train_loader, val_loader = get_train_loaders(args.ifold, batch_size=batch_size, dev_mode=False)
     #validate(model, val_loader, criterion)
@@ -80,14 +82,16 @@ def train(args):
         print('epoch {}: {:.2f} minutes'.format(epoch, (time.time() - bg) / 60))
 
         iout, iou, val_loss = validate(model, val_loader, criterion)
-
+        
         if iout > best_iout:
             best_iout = iout
             torch.save(model.state_dict(), model_file)
 
         log.info('epoch {}: train loss: {:.4f} val loss: {:.4f} iout: {:.4f} best iout: {:.4f} iou: {:.4f} lr: {:.7f}'
             .format(epoch, train_loss, val_loss, iout, best_iout, iou, current_lr))
-        
+        nni.report_intermediate_result(best_iout)
+
+    nni.report_final_result(best_iout)    
 
 def validate(model, val_loader, criterion):
     model.eval()
@@ -128,6 +132,14 @@ def generate_preds(outputs, target_size):
 
     return preds
 
+def generate_default_params():
+    '''
+    Generate default hyper parameters
+    '''
+    return {
+        'weight_decay': 0.0001
+    }
+
 if __name__ == '__main__':
     
     log.basicConfig(
@@ -143,4 +155,7 @@ if __name__ == '__main__':
     parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')
     args = parser.parse_args()
 
-    train(args)
+    received_params = nni.get_parameters()
+    params = generate_default_params()
+    params.update(received_params)
+    train(args, params)

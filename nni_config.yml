@@ -1,0 +1,25 @@
+authorName: chicm
+experimentName: salt
+trialConcurrency: 4
+maxExecDuration: 100h
+maxTrialNum: 12
+#choice: local, remote
+trainingServicePlatform: remote
+searchSpacePath: /mnt/d/kaggle/salt/search_space.json
+#choice: true, false
+useAnnotation: false
+tuner:
+  #choice: TPE, Random, Anneal, Evolution
+  builtinTunerName: Random
+  classArgs:
+    #choice: maximize, minimize
+    optimize_mode: maximize
+trial:
+  command: python3 train.py
+  codeDir: /mnt/d/kaggle/salt
+  gpuNum: 1
+machineList:
+  - ip: 10.151.41.70
+    port: 22
+    username: core
+    passwd: openmind
