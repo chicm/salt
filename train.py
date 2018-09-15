@@ -11,8 +11,8 @@ import pdb
 import settings
 from loader import get_train_loaders
 from unet_models import UNetResNet
-from lovasz_losses import lovasz_hinge
-from postprocessing import crop_image, binarize
+from lovasz_losses import lovasz_hinge, lovasz_softmax
+from postprocessing import crop_image, binarize, crop_image_softmax
 from metrics import intersection_over_union, intersection_over_union_thresholds
 
 epochs = 80
@@ -46,7 +46,7 @@ def train(args):
         model.load_state_dict(torch.load(CKP))
     model = model.cuda()
 
-    criterion = lovasz_hinge 
+    criterion = lovasz_softmax #lovasz_hinge 
     optimizer = optim.Adam(model.parameters(), lr=args.lr) #, weight_decay=0.0001)
     #optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=0.0001)
 
@@ -116,14 +116,18 @@ def validate(model, val_loader, criterion, threshold=0.5):
 
             loss = criterion(output, target)
             val_loss += loss.item()
-            output = torch.sigmoid(output)
+            #output = torch.sigmoid(output)
+            #print(output.size())
+            _, output = torch.max(output, 1)
+            #print(output.size())
+            
             for o in output.cpu().numpy():
                 outputs.append(o)
 
     n_batches = val_loader.num // batch_size if val_loader.num % batch_size == 0 else val_loader.num // batch_size + 1
 
     # y_pred, list of 400 np array, each np array's shape is 101,101
-    y_pred = generate_preds(outputs, (settings.ORIG_H, settings.ORIG_W), threshold)
+    y_pred = generate_preds_softmax(outputs, (settings.ORIG_H, settings.ORIG_W), threshold)
     print('Validation loss: {:.4f}'.format(val_loss/n_batches))
 
     iou_score = intersection_over_union(val_loader.y_true, y_pred)
@@ -159,6 +163,16 @@ def generate_preds(outputs, target_size, threshold=0.5):
 
     return preds
 
+def generate_preds_softmax(outputs, target_size, threshold=0.5):
+    preds = []
+
+    for output in outputs:
+        cropped = crop_image_softmax(output, target_size=target_size)
+        #pred = binarize(cropped, threshold)
+        preds.append(cropped)
+
+    return preds
+
 if __name__ == '__main__':
     
     log.basicConfig(
@@ -168,7 +182,7 @@ if __name__ == '__main__':
         level = log.INFO)
     #pdb.set_trace()
     parser = argparse.ArgumentParser(description='Salt segmentation')
-    parser.add_argument('--lr', default=0.00002, type=float, help='learning rate')
+    parser.add_argument('--lr', default=0.0002, type=float, help='learning rate')
     parser.add_argument('--ifold', default=0, type=int, help='kfold index')
     parser.add_argument('--start_epoch', default=0, type=int, help='start epoch')
     parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')

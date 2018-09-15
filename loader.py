@@ -48,22 +48,21 @@ class ImageDataset(data.Dataset):
 
     def aug_image(self, img, mask=None):
         if mask is not None:
-            Mi = from_pil(mask)
-            Mi = [to_pil(Mi == class_nr) for class_nr in [0, 1]]
-            
-            Xi, *Mi = from_pil(img, *Mi)
-            Xi, *Mi = self.augment_with_target(Xi, *Mi)
+            Xi, Mi = from_pil(img, mask)
+            #print('>>>', Xi.shape, Mi.shape)
+            #print(Mi)
+            Xi, Mi = self.augment_with_target(Xi, Mi)
             if self.image_augment is not None:
                 Xi = self.image_augment(Xi)
-            Xi, *Mi = to_pil(Xi, *Mi)
+            Xi, Mi = to_pil(Xi, Mi)
 
             if self.mask_transform is not None:
-                Mi = [self.mask_transform(m) for m in Mi]
+                Mi = self.mask_transform(Mi)
 
             if self.image_transform is not None:
                 Xi = self.image_transform(Xi)
 
-            return Xi, torch.cat(Mi, dim=0)
+            return Xi, Mi#torch.cat(Mi, dim=0)
         else:
             Xi = from_pil(img)
             Xi = self.image_augment(Xi)
@@ -78,7 +77,11 @@ class ImageDataset(data.Dataset):
         if not grayscale:
             image = image.convert('RGB')
         else:
-            image = image.convert('L').point(lambda x: 0 if x < 128 else 255, '1')
+            image = image.convert('L').point(lambda x: 0 if x < 128 else 1, 'L')
+            #image = np.asarray(image) #.convert('L')
+            #print(np.max(image))
+            #print(image)
+            #pass
         return image
 
     def __len__(self):
@@ -175,7 +178,7 @@ def test_test_loader():
             break
 
 if __name__ == '__main__':
-    test_test_loader()
-    #test_train_loader()
+    #test_test_loader()
+    test_train_loader()
     #small_dict, img_ids = load_small_train_ids()
     #print(img_ids[:10])

@@ -37,7 +37,7 @@ affine_seq = iaa.Sequential([
     iaa.Flipud(0.3), 
     iaa.Affine(
         scale={"x": (0.9, 1.1), "y": (0.9, 1.1)},
-        rotate=(-20, 20),
+        rotate=(-10, 10),
         translate_percent={"x": (-0.15, 0.15), "y": (-0.15, 0.15)}, mode='reflect' #symmetric
     ),
     # Deformations
