@@ -24,6 +24,7 @@ class ImageDataset(data.Dataset):
     
         self.img_ids = meta[ID_COLUMN].values
         self.img_filenames = meta[X_COLUMN].values
+        self.salt_exists = meta['salt_exists'].values
         
         if self.train_mode:
             self.mask_filenames = meta[Y_COLUMN].values
@@ -41,7 +42,7 @@ class ImageDataset(data.Dataset):
             mask_fn = self.mask_filenames[index]
             mask = self.load_image(mask_fn, True)
             img, mask = self.aug_image(img, mask)
-            return img, mask
+            return img, mask, self.salt_exists[index]
         else:
             img = self.aug_image(img)
             return [img]
@@ -95,7 +96,9 @@ class ImageDataset(data.Dataset):
         if self.train_mode:
             masks = [x[1] for x in batch]
             labels = torch.stack(masks)
-            return inputs, labels
+
+            salt_target = [x[2] for x in batch]
+            return inputs, labels, torch.FloatTensor(salt_target)
         else:
             return inputs
 
@@ -122,8 +125,10 @@ mask_transform = transforms.Compose([transforms.Lambda(to_array),
 #import pdb
 def get_train_loaders(ifold, batch_size=8, dev_mode=False):
     #pdb.set_trace()
+    train_shuffle = True
     train_meta, val_meta = get_nfold_split(ifold, nfold=10)
     if dev_mode:
+        train_shuffle = False
         train_meta = train_meta.iloc[:10]
         val_meta = val_meta.iloc[:10]
     print(train_meta[X_COLUMN].values[:5])
@@ -135,7 +140,7 @@ def get_train_loaders(ifold, batch_size=8, dev_mode=False):
                             image_transform=image_transform,
                             mask_transform=mask_transform)
 
-    train_loader = data.DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=4, collate_fn=train_set.collate_fn, drop_last=True)
+    train_loader = data.DataLoader(train_set, batch_size=batch_size, shuffle=train_shuffle, num_workers=4, collate_fn=train_set.collate_fn, drop_last=True)
     train_loader.num = len(train_set)
 
     val_set = ImageDataset(True, val_meta,
@@ -163,9 +168,10 @@ def test_train_loader():
     train_loader, val_loader = get_train_loaders(0, batch_size=4, dev_mode=True)
     print(train_loader.num, val_loader.num)
     for i, data in enumerate(train_loader):
-        imgs, masks = data
+        imgs, masks, salt_exists = data
         #pdb.set_trace()
-        print(imgs.size(), masks.size())
+        print(imgs.size(), masks.size(), salt_exists.size())
+        print(salt_exists)
         #print(imgs)
         #print(masks)
 

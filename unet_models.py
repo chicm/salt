@@ -337,7 +337,7 @@ class UNetResNet(nn.Module):
 
     """
 
-    def __init__(self, encoder_depth, num_classes, num_filters=32, dropout_2d=0.2,
+    def __init__(self, encoder_depth, num_classes=1, num_filters=32, dropout_2d=0.2,
                  pretrained=False, is_deconv=False):
         super().__init__()
         #pdb.set_trace()
@@ -387,6 +387,7 @@ class UNetResNet(nn.Module):
         self.dec1 = DecoderBlockV2(num_filters * 2 * 2, num_filters * 2 * 2, num_filters, is_deconv)
         self.dec0 = ConvRelu(num_filters, num_filters)
         self.final = nn.Conv2d(num_filters, num_classes, kernel_size=1)
+        self.classifier = nn.Linear(num_filters * 256 * 256, 1)
 
     def forward(self, x):
         conv1 = self.conv1(x)
@@ -407,7 +408,9 @@ class UNetResNet(nn.Module):
         dec0 = self.dec0(dec1)
         out = self.pool(dec0)
 
-        return self.final(F.dropout2d(out, p=self.dropout_2d))
+        cls_out = self.classifier(F.dropout(dec0.view(dec0.size(0), -1), p=0.25))
+
+        return self.final(F.dropout2d(out, p=self.dropout_2d)), cls_out
     
     def freeze_bn(self):
         '''Freeze BatchNorm layers.'''
@@ -416,12 +419,12 @@ class UNetResNet(nn.Module):
                 layer.eval()
 
 def test():
-    model = UNetResNet(34, 2, pretrained=True, is_deconv=True).cuda()
+    model = UNetResNet(34, 1, pretrained=True, is_deconv=True).cuda()
     model.freeze_bn()
     inputs = torch.randn(2,3,128,128).cuda()
-    out = model(inputs)
-    print(model)
-    print(out.size())
+    out, cls_taret = model(inputs)
+    #print(model)
+    print(out.size(), cls_taret.size())
     #print(out)
 
 

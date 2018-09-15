@@ -26,6 +26,17 @@ def convert_model():
     print('saving... {}'.format(new_model_file))
     torch.save(model.module.state_dict(), new_model_file)
 
+def convert_model2():
+    model = UNetResNet(152, 2, pretrained=True, is_deconv=True)
+    model.classifier = None
+    old_model_file = os.path.join(settings.MODEL_DIR, '152', 'best_814_elu.pth')
+    model.load_state_dict(torch.load(old_model_file))
+
+    model.final = nn.Conv2d(32, 1, kernel_size=1)
+    model.classifier =  nn.Linear(32 * 256 * 256, 1)
+
+    new_model_file = os.path.join(settings.MODEL_DIR, '152_new', 'best_814.pth')
+    torch.save(model.state_dict(), new_model_file)
 
 def test():
     meta = pd.read_csv(settings.META_FILE)
@@ -44,6 +55,7 @@ def test():
     print(meta_train_split[settings.X_COLUMN].values[:10])
 
 if __name__ == '__main__':
-    prepare_metadata()
+    #prepare_metadata()
     #test()
-    #convert_model()
+    convert_model2()
+    #get_mask_existence()

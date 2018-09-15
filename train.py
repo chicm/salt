@@ -4,6 +4,7 @@ import logging as log
 import time
 
 import torch
+import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 from torch.optim.lr_scheduler import ExponentialLR, CosineAnnealingLR, _LRScheduler, ReduceLROnPlateau
@@ -15,8 +16,8 @@ from lovasz_losses import lovasz_hinge, lovasz_softmax
 from postprocessing import crop_image, binarize, crop_image_softmax
 from metrics import intersection_over_union, intersection_over_union_thresholds
 
-epochs = 80
-batch_size = 64
+epochs = 100
+batch_size = 24
 MODEL_DIR = settings.MODEL_DIR
 #CKP = '{}/152/best_814_elu.pth'.format(MODEL_DIR)
 
@@ -35,11 +36,52 @@ class CyclicExponentialLR(_LRScheduler):
         self.last_lr = lr
         return [lr]*len(self.base_lrs)
 
+def weighted_loss(output, target):
+    mask_output, salt_exists_output = output
+    mask_target, salt_exists_target = target
+    #print(salt_exists_output.size(), salt_exists_target.size())
+    #print(mask_output.size(), mask_target.size())
+    salt_exists_output = F.sigmoid(salt_exists_output)
+    bce_loss = nn.BCELoss()(salt_exists_output.squeeze(), salt_exists_target)
+    lovasz_loss = lovasz_hinge(mask_output, mask_target)
+    #print(bce_loss, lovasz_loss)
+
+    return lovasz_loss, lovasz_loss.item(), bce_loss.item()
+    #return bce_loss, lovasz_loss.item(), bce_loss.item()
+
+def get_params(model, base_lr):
+    group1 = [model.conv1, model.conv2, model.conv3, model.conv4, model.conv5]
+    group2 = [model.dec0, model.dec1, model.dec2, model.dec3, model.dec4, model.dec5]
+    group3 = [model.classifier, model.final]
+
+    params1 = []
+    for x in group1:
+        for p in x.parameters():
+            params1.append(p)
+    
+    param_group1 = {'params': params1, 'lr': base_lr / 100}
+
+    params2 = []
+    for x in group2:
+        for p in x.parameters():
+            params2.append(p)
+    param_group2 = {'params': params2, 'lr': base_lr / 10}
+
+    params3 = []
+    for x in group3:
+        for p in x.parameters():
+            params3.append(p)
+    param_group3 = {'params': params3, 'lr': base_lr}
+
+    return [param_group1, param_group2, param_group3]
+
 def train(args):
     print('start training...')
-    model_file = '{}/34/best_{}.pth'.format(MODEL_DIR, args.ifold)
+    model_file = '{}/152_new/best_{}.pth'.format(MODEL_DIR, args.ifold)
 
-    model = UNetResNet(34, 2, pretrained=True, is_deconv=True)
+    model = UNetResNet(152, pretrained=True, is_deconv=True)
+    #CKP = os.path.join(settings.MODEL_DIR, '34', 'classifier.pth')
+    #CKP = os.path.join(MODEL_DIR, '152_new', 'best_814.pth')
     CKP = model_file
     if os.path.exists(CKP):
         print('loading {}...'.format(CKP))
@@ -47,16 +89,17 @@ def train(args):
     model = model.cuda()
 
     criterion = lovasz_softmax #lovasz_hinge 
-    optimizer = optim.Adam(model.parameters(), lr=args.lr) #, weight_decay=0.0001)
+    optimizer = optim.Adam(get_params(model, args.lr), lr=args.lr/10) #, weight_decay=0.0001)
     #optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=0.0001)
 
     train_loader, val_loader = get_train_loaders(args.ifold, batch_size=batch_size, dev_mode=False)
 
     # CyclicExponentialLR(optimizer, 0.9, init_lr=args.lr)
-    lr_scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=5, min_lr=1e-6)
+    lr_scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=0.7, patience=8, min_lr=1e-5)
     #CyclicExponentialLR(optimizer, 0.8, init_lr=args.lr) #ExponentialLR(optimizer, 0.9, last_epoch=-1) #CosineAnnealingLR(optimizer, 15, 1e-7) 
 
     best_iout, _, _ = validate(model, val_loader, criterion)
+    #model.classifier.train()
     model.train()
     lr_scheduler.step(best_iout)
 
@@ -65,16 +108,19 @@ def train(args):
 
         #if epoch < 5:
         #    model.freeze_bn()
-        current_lr = optimizer.state_dict()['param_groups'][0]['lr']
+        current_lr = optimizer.state_dict()['param_groups'][2]['lr']
         print('lr:', current_lr)
         bg = time.time()
         for batch_idx, data in enumerate(train_loader):
-            img, target = data
-            img, target = img.cuda(), target.cuda()
+            img, target, salt_target = data
+            img, target, salt_target = img.cuda(), target.cuda(), salt_target.cuda()
             optimizer.zero_grad()
-            output = model(img)
-            loss = criterion(output, target)
+            output, salt_out = model(img)
+            #loss = criterion(output, target)
+            loss, _, _ = weighted_loss((output, salt_out), (target, salt_target))
             loss.backward()
+            #salt_out = F.sigmoid(salt_out)
+            #print(salt_out.squeeze(), salt_target)
 
             # adamW
             wd = 0.0001
@@ -96,39 +142,48 @@ def train(args):
             best_iout = iout
             print('saving {}...'.format(model_file))
             torch.save(model.state_dict(), model_file)
+        torch.save(model.state_dict(), os.path.join(settings.MODEL_DIR, '34', 'classifier.pth'))
 
         log.info('epoch {}: train loss: {:.4f} val loss: {:.4f} iout: {:.4f} best iout: {:.4f} iou: {:.4f} lr: {:.7f}'
             .format(epoch, train_loss, val_loss, iout, best_iout, iou, current_lr))
 
         model.train()
-        lr_scheduler.step(best_iout)
+        #model.classifier.train()
+        lr_scheduler.step(iout)
         
 
 def validate(model, val_loader, criterion, threshold=0.5):
     model.eval()
     print('validating...')
     outputs = []
-    val_loss = 0
+    val_loss, L_loss, B_loss = 0, 0, 0
     with torch.no_grad():
-        for img, target in val_loader:
-            img, target = img.cuda(), target.cuda()
-            output = model(img)
+        for img, target, salt_target in val_loader:
+            img, target, salt_target = img.cuda(), target.cuda(), salt_target.cuda()
+            output, salt_out = model(img)
+            #print(output.size(), salt_out.size())
+            #print(salt_out)
 
-            loss = criterion(output, target)
+            #loss = criterion(output, target)
+            loss, lovas_loss_value, bce_loss_value = weighted_loss((output, salt_out), (target, salt_target))
+            #print(salt_out.squeeze(), salt_target)
             val_loss += loss.item()
+            L_loss += lovas_loss_value
+            B_loss += bce_loss_value
             #output = torch.sigmoid(output)
             #print(output.size())
-            _, output = torch.max(output, 1)
+            # _, output = torch.max(output, 1)
             #print(output.size())
             
-            for o in output.cpu().numpy():
-                outputs.append(o)
+            for o in output.cpu():
+                outputs.append(o.squeeze().numpy())
 
     n_batches = val_loader.num // batch_size if val_loader.num % batch_size == 0 else val_loader.num // batch_size + 1
 
     # y_pred, list of 400 np array, each np array's shape is 101,101
     y_pred = generate_preds_softmax(outputs, (settings.ORIG_H, settings.ORIG_W), threshold)
-    print('Validation loss: {:.4f}'.format(val_loss/n_batches))
+    print(y_pred[0].shape)
+    print('Validation loss: {:.4f}, L: {:.4f} B: {:.4f}'.format(val_loss/n_batches, L_loss/n_batches, B_loss/n_batches))
 
     iou_score = intersection_over_union(val_loader.y_true, y_pred)
     iout_score = intersection_over_union_thresholds(val_loader.y_true, y_pred)
@@ -168,8 +223,8 @@ def generate_preds_softmax(outputs, target_size, threshold=0.5):
 
     for output in outputs:
         cropped = crop_image_softmax(output, target_size=target_size)
-        #pred = binarize(cropped, threshold)
-        preds.append(cropped)
+        pred = binarize(cropped, threshold)
+        preds.append(pred)
 
     return preds
 
@@ -182,7 +237,7 @@ if __name__ == '__main__':
         level = log.INFO)
     #pdb.set_trace()
     parser = argparse.ArgumentParser(description='Salt segmentation')
-    parser.add_argument('--lr', default=0.0002, type=float, help='learning rate')
+    parser.add_argument('--lr', default=0.001, type=float, help='learning rate')
     parser.add_argument('--ifold', default=0, type=int, help='kfold index')
     parser.add_argument('--start_epoch', default=0, type=int, help='start epoch')
     parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')
