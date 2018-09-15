@@ -16,7 +16,7 @@ from lovasz_losses import lovasz_hinge, lovasz_softmax
 from postprocessing import crop_image, binarize, crop_image_softmax
 from metrics import intersection_over_union, intersection_over_union_thresholds
 
-epochs = 100
+epochs = 80
 batch_size = 24
 MODEL_DIR = settings.MODEL_DIR
 #CKP = '{}/152/best_814_elu.pth'.format(MODEL_DIR)
@@ -174,6 +174,7 @@ def validate(model, val_loader, criterion, threshold=0.5):
             #print(output.size())
             # _, output = torch.max(output, 1)
             #print(output.size())
+            output = torch.sigmoid(output)
             
             for o in output.cpu():
                 outputs.append(o.squeeze().numpy())
@@ -237,7 +238,7 @@ if __name__ == '__main__':
         level = log.INFO)
     #pdb.set_trace()
     parser = argparse.ArgumentParser(description='Salt segmentation')
-    parser.add_argument('--lr', default=0.001, type=float, help='learning rate')
+    parser.add_argument('--lr', default=0.0005, type=float, help='learning rate')
     parser.add_argument('--ifold', default=0, type=int, help='kfold index')
     parser.add_argument('--start_epoch', default=0, type=int, help='start epoch')
     parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')
