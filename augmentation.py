@@ -33,14 +33,16 @@ iaa.PerspectiveTransform._augment_images = _perspective_transform_augment_images
 
 affine_seq = iaa.Sequential([
     # General
-    iaa.SomeOf((1, 2),
-               [iaa.Fliplr(0.5),
-                iaa.Affine(rotate=(-10, 10),
-                           translate_percent={"x": (-0.25, 0.25)}, mode='symmetric'),
-                ]),
+    iaa.Fliplr(0.3),
+    iaa.Flipud(0.3), 
+    iaa.Affine(
+        scale={"x": (0.9, 1.1), "y": (0.9, 1.1)},
+        rotate=(-20, 20),
+        translate_percent={"x": (-0.15, 0.15), "y": (-0.15, 0.15)}, mode='reflect' #symmetric
+    ),
     # Deformations
-    iaa.Sometimes(0.3, iaa.PiecewiseAffine(scale=(0.04, 0.08))),
-    iaa.Sometimes(0.3, iaa.PerspectiveTransform(scale=(0.05, 0.1))),
+    #iaa.Sometimes(0.3, iaa.PiecewiseAffine(scale=(0.04, 0.08))),
+    #iaa.Sometimes(0.3, iaa.PerspectiveTransform(scale=(0.05, 0.1))),
 ], random_order=True)
 
 intensity_seq = iaa.Sequential([
@@ -64,10 +66,20 @@ intensity_seq = iaa.Sequential([
     ])
 ], random_order=False)
 
+brightness_seq =  iaa.Sequential([
+    iaa.Multiply((0.9, 1.1)),
+    iaa.Sometimes(0.3,
+        iaa.GaussianBlur(sigma=(0, 0.5))
+    )
+], random_order=False)
 
 def crop_seq(crop_size, pad_size, pad_method):
-    seq = iaa.Sequential([affine_seq, PadFixed(pad=pad_size, pad_method=pad_method), 
-                          RandomCropFixedSize(px=crop_size)], random_order=False)
+    seq = iaa.Sequential([
+            PadFixed(pad=pad_size, pad_method=pad_method),
+            affine_seq, 
+            RandomCropFixedSize(px=crop_size)
+        ], 
+        random_order=False)
     return seq
 
 
@@ -286,7 +298,9 @@ def test_augment():
     img, *Mi = from_pil(img, *Mi)
 
     aug = ImgAug(crop_seq(crop_size=(settings.H, settings.W), pad_size=(32,32), pad_method='reflect'))
+    aug2 = ImgAug(brightness_seq)
     img, *Mi = aug(img, *Mi)
+    img = aug2(img)
     
     img, *Mi = to_pil(img, Mi[0]*255, Mi[1]*255)
     ImageDraw.Draw(img)

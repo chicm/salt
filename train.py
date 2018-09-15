@@ -6,7 +6,7 @@ import time
 import torch
 import torch.optim as optim
 import torch.nn.functional as F
-from torch.optim.lr_scheduler import ExponentialLR, CosineAnnealingLR, _LRScheduler
+from torch.optim.lr_scheduler import ExponentialLR, CosineAnnealingLR, _LRScheduler, ReduceLROnPlateau
 import pdb
 import settings
 from loader import get_train_loaders
@@ -15,13 +15,13 @@ from lovasz_losses import lovasz_hinge
 from postprocessing import crop_image, binarize
 from metrics import intersection_over_union, intersection_over_union_thresholds
 
-epochs = 120
+epochs = 80
 batch_size = 64
 MODEL_DIR = settings.MODEL_DIR
 #CKP = '{}/152/best_814_elu.pth'.format(MODEL_DIR)
 
 class CyclicExponentialLR(_LRScheduler):
-    def __init__(self, optimizer, gamma, init_lr, min_lr=2e-7, restart_max_lr=1e-5, last_epoch=-1):
+    def __init__(self, optimizer, gamma, init_lr, min_lr=5e-7, restart_max_lr=1e-5, last_epoch=-1):
         self.gamma = gamma
         self.last_lr = init_lr
         self.min_lr = min_lr
@@ -37,9 +37,9 @@ class CyclicExponentialLR(_LRScheduler):
 
 def train(args):
     print('start training...')
-    model_file = '{}/152/best_{}.pth'.format(MODEL_DIR, args.ifold)
+    model_file = '{}/34/best_{}.pth'.format(MODEL_DIR, args.ifold)
 
-    model = UNetResNet(152, 2, pretrained=True, is_deconv=True)
+    model = UNetResNet(34, 2, pretrained=True, is_deconv=True)
     CKP = model_file
     if os.path.exists(CKP):
         print('loading {}...'.format(CKP))
@@ -47,18 +47,20 @@ def train(args):
     model = model.cuda()
 
     criterion = lovasz_hinge 
-    optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=0.0001)
+    optimizer = optim.Adam(model.parameters(), lr=args.lr) #, weight_decay=0.0001)
+    #optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=0.0001)
 
     train_loader, val_loader = get_train_loaders(args.ifold, batch_size=batch_size, dev_mode=False)
-    validate(model, val_loader, criterion)
-    # CyclicExponentialLR(optimizer, 0.9, init_lr=args.lr)
-    lr_scheduler = CyclicExponentialLR(optimizer, 0.9, init_lr=args.lr) #ExponentialLR(optimizer, 0.9, last_epoch=-1) #CosineAnnealingLR(optimizer, 15, 1e-7) 
 
-    best_iout = 0
+    # CyclicExponentialLR(optimizer, 0.9, init_lr=args.lr)
+    lr_scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=5, min_lr=1e-6)
+    #CyclicExponentialLR(optimizer, 0.8, init_lr=args.lr) #ExponentialLR(optimizer, 0.9, last_epoch=-1) #CosineAnnealingLR(optimizer, 15, 1e-7) 
+
+    best_iout, _, _ = validate(model, val_loader, criterion)
+    model.train()
+    lr_scheduler.step(best_iout)
 
     for epoch in range(args.start_epoch, epochs):
-        model.train()
-        lr_scheduler.step()
         train_loss = 0
 
         #if epoch < 5:
@@ -73,6 +75,13 @@ def train(args):
             output = model(img)
             loss = criterion(output, target)
             loss.backward()
+
+            # adamW
+            wd = 0.0001
+            for group in optimizer.param_groups:
+                for param in group['params']:
+                    param.data = param.data.add(-wd * group['lr'], param.data)
+
             optimizer.step()
 
             train_loss += loss.item()
@@ -90,11 +99,14 @@ def train(args):
 
         log.info('epoch {}: train loss: {:.4f} val loss: {:.4f} iout: {:.4f} best iout: {:.4f} iou: {:.4f} lr: {:.7f}'
             .format(epoch, train_loss, val_loss, iout, best_iout, iou, current_lr))
+
+        model.train()
+        lr_scheduler.step(best_iout)
         
 
 def validate(model, val_loader, criterion, threshold=0.5):
     model.eval()
-    print('validating...', threshold)
+    print('validating...')
     outputs = []
     val_loss = 0
     with torch.no_grad():
@@ -156,13 +168,13 @@ if __name__ == '__main__':
         level = log.INFO)
     #pdb.set_trace()
     parser = argparse.ArgumentParser(description='Salt segmentation')
-    parser.add_argument('--lr', default=0.00012, type=float, help='learning rate')
+    parser.add_argument('--lr', default=0.00002, type=float, help='learning rate')
     parser.add_argument('--ifold', default=0, type=int, help='kfold index')
     parser.add_argument('--start_epoch', default=0, type=int, help='start epoch')
     parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')
     args = parser.parse_args()
 
-    find_threshold()
-    #for i in range(3, 10):
-    #    args.ifold = i
-    #    train(args)
+    #find_threshold()
+    for i in range(3):
+        args.ifold = i
+        train(args)

@@ -53,7 +53,8 @@ class ImageDataset(data.Dataset):
             
             Xi, *Mi = from_pil(img, *Mi)
             Xi, *Mi = self.augment_with_target(Xi, *Mi)
-            Xi = self.image_augment(Xi)
+            if self.image_augment is not None:
+                Xi = self.image_augment(Xi)
             Xi, *Mi = to_pil(Xi, *Mi)
 
             if self.mask_transform is not None:
@@ -126,8 +127,8 @@ def get_train_loaders(ifold, batch_size=8, dev_mode=False):
     print(train_meta[Y_COLUMN].values[:5])
 
     train_set = ImageDataset(True, train_meta,
-                            augment_with_target=ImgAug(aug.crop_seq(crop_size=(H, W), pad_size=(32,32), pad_method='reflect')),
-                            image_augment=ImgAug(aug.intensity_seq),
+                            augment_with_target=ImgAug(aug.crop_seq(crop_size=(H, W), pad_size=(28,28), pad_method='reflect')),
+                            image_augment=ImgAug(aug.brightness_seq),
                             image_transform=image_transform,
                             mask_transform=mask_transform)
 
@@ -136,7 +137,7 @@ def get_train_loaders(ifold, batch_size=8, dev_mode=False):
 
     val_set = ImageDataset(True, val_meta,
                             augment_with_target=ImgAug(aug.pad_to_fit_net(64, 'reflect')),
-                            image_augment=ImgAug(aug.pad_to_fit_net(64, 'reflect')),
+                            image_augment=None, #ImgAug(aug.pad_to_fit_net(64, 'reflect')),
                             image_transform=image_transform,
                             mask_transform=mask_transform)
     val_loader = data.DataLoader(val_set, batch_size=batch_size, shuffle=False, num_workers=4, collate_fn=val_set.collate_fn)

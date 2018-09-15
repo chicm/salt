@@ -347,7 +347,7 @@ class UNetResNet(nn.Module):
         if encoder_depth == 34:
             self.encoder = torchvision.models.resnet34(pretrained=pretrained)
             bottom_channel_nr = 512
-        if encoder_depth == 50:
+        elif encoder_depth == 50:
             self.encoder = torchvision.models.resnet50(pretrained=pretrained)
             bottom_channel_nr = 2048
         elif encoder_depth == 101:
@@ -365,8 +365,8 @@ class UNetResNet(nn.Module):
 
         self.conv1 = nn.Sequential(self.encoder.conv1,
                                    self.encoder.bn1,
-                                   self.encoder.relu,
-                                   self.pool)
+                                   self.encoder.relu)
+                                   #self.pool)
 
         self.conv2 = self.encoder.layer1
 
@@ -405,8 +405,9 @@ class UNetResNet(nn.Module):
         dec2 = self.dec2(torch.cat([dec3, conv2], 1))
         dec1 = self.dec1(dec2)
         dec0 = self.dec0(dec1)
+        out = self.pool(dec0)
 
-        return self.final(F.dropout2d(dec0, p=self.dropout_2d))
+        return self.final(F.dropout2d(out, p=self.dropout_2d))
     
     def freeze_bn(self):
         '''Freeze BatchNorm layers.'''
@@ -415,12 +416,13 @@ class UNetResNet(nn.Module):
                 layer.eval()
 
 def test():
-    model = UNetResNet(50, 2, pretrained=True, is_deconv=True).cuda()
+    model = UNetResNet(34, 2, pretrained=True, is_deconv=True).cuda()
     model.freeze_bn()
     inputs = torch.randn(2,3,128,128).cuda()
     out = model(inputs)
+    print(model)
     print(out.size())
-    print(out)
+    #print(out)
 
 
 if __name__ == '__main__':
