@@ -17,7 +17,7 @@ from postprocessing import crop_image, binarize, crop_image_softmax
 from metrics import intersection_over_union, intersection_over_union_thresholds
 
 epochs = 80
-batch_size = 36
+batch_size = 32
 MODEL_DIR = settings.MODEL_DIR
 #CKP = '{}/152/best_814_elu.pth'.format(MODEL_DIR)
 

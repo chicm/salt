@@ -580,7 +580,7 @@ class UNetResNet2(nn.Module):
         self.final = nn.Conv2d(num_filters, num_classes, kernel_size=1)
 
         self.logit = nn.Sequential(
-            nn.Conv2d(544, 64, kernel_size=3, padding=1),
+            nn.Conv2d(736, 64, kernel_size=3, padding=1),
             nn.ReLU(inplace=True),
             nn.Conv2d(64, 1, kernel_size=1, padding=0)
         )
@@ -610,9 +610,9 @@ class UNetResNet2(nn.Module):
         f = torch.cat([
             d1,
             F.upsample(d2, scale_factor=2, mode='bilinear', align_corners=False),
-            F.upsample(d2, scale_factor=2, mode='bilinear', align_corners=False),
-            F.upsample(d2, scale_factor=2, mode='bilinear', align_corners=False),
-            F.upsample(d2, scale_factor=2, mode='bilinear', align_corners=False),
+            F.upsample(d3, scale_factor=4, mode='bilinear', align_corners=False),
+            F.upsample(d4, scale_factor=8, mode='bilinear', align_corners=False),
+            F.upsample(d5, scale_factor=16, mode='bilinear', align_corners=False),
         ], 1) 
 
         f = F.dropout2d(f, p=self.dropout_2d)
