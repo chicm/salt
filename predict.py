@@ -43,7 +43,7 @@ def predict():
     submission.to_csv(submission_filepath, index=None, encoding='utf-8')
 
 def ensemble(checkpoints):
-    model = UNetResNet(152, 2, pretrained=True, is_deconv=True)
+    model = UNetResNet(152, pretrained=True, is_deconv=True)
 
     preds = []
     for checkpoint in checkpoints:
@@ -58,10 +58,11 @@ def ensemble(checkpoints):
         with torch.no_grad():
             for i, img in enumerate(test_loader):
                 img = img.cuda()
-                output = torch.sigmoid(model(img))
+                output, _ = model(img)
+                output = torch.sigmoid(output)
 
-                for o in output.cpu().numpy():
-                    outputs.append(o)
+                for o in output.cpu():
+                    outputs.append(o.squeeze().numpy())
                 print(f'{batch_size*(i+1)} / {test_loader.num}', end='\r')
         preds.append(np.array(outputs).astype(np.float16))
         #print(preds[0].dtype)
@@ -74,7 +75,7 @@ def ensemble(checkpoints):
     y_pred_test = generate_preds_softmax(tmp2, (settings.ORIG_H, settings.ORIG_W))
 
     submission = create_submission(test_loader.meta, y_pred_test)
-    submission_filepath = 'ensemble_039.csv'
+    submission_filepath = 'ensemble_152_new.csv'
     submission.to_csv(submission_filepath, index=None, encoding='utf-8')
 
 def generate_preds(outputs, target_size):
@@ -106,11 +107,15 @@ if __name__ == '__main__':
         r'G:\salt\models\152\best_6.pth', r'G:\salt\models\152\best_7.pth',
         r'G:\salt\models\152\best_8.pth', r'G:\salt\models\152\best_9.pth',
     ]
-    '''
+    
     checkpoints = [
         r'G:\salt\models\152\ensemble_822\best_0.pth', r'G:\salt\models\152\ensemble_822\best_1.pth',
         r'G:\salt\models\152\ensemble_822\best_2.pth', r'G:\salt\models\152\ensemble_822\best_3.pth',
         r'G:\salt\models\152\ensemble_822\best_4.pth'
     ]
-    predict()
-    #ensemble(checkpoints)
+    '''
+    checkpoints = [
+        r'G:\salt\models\152_new\best_0.pth', r'G:\salt\models\152_new\best_1.pth'
+    ]
+    #predict()
+    ensemble(checkpoints)
