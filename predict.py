@@ -39,7 +39,7 @@ def predict():
     y_pred_test = generate_preds_softmax(outputs, (settings.ORIG_H, settings.ORIG_W))
 
     submission = create_submission(test_loader.meta, y_pred_test)
-    submission_filepath = 'sub_new1.csv'
+    submission_filepath = 'sub_new2.csv'
     submission.to_csv(submission_filepath, index=None, encoding='utf-8')
 
 def ensemble(checkpoints):

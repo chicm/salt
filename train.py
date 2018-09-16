@@ -41,8 +41,9 @@ def weighted_loss(output, target):
     mask_target, salt_exists_target = target
     #print(salt_exists_output.size(), salt_exists_target.size())
     #print(mask_output.size(), mask_target.size())
-    salt_exists_output = F.sigmoid(salt_exists_output)
-    bce_loss = nn.BCELoss()(salt_exists_output.squeeze(), salt_exists_target)
+    #salt_exists_output = nn.Sigmoid()(salt_exists_output)
+    #bce_loss = nn.BCELoss()(salt_exists_output.squeeze(), salt_exists_target)
+    bce_loss = nn.BCEWithLogitsLoss()(salt_exists_output.squeeze(), salt_exists_target)
     lovasz_loss = lovasz_hinge(mask_output, mask_target)
     #print(bce_loss, lovasz_loss)
 
@@ -95,7 +96,7 @@ def train(args):
     train_loader, val_loader = get_train_loaders(args.ifold, batch_size=batch_size, dev_mode=False)
 
     # CyclicExponentialLR(optimizer, 0.9, init_lr=args.lr)
-    lr_scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=0.7, patience=8, min_lr=1e-5)
+    lr_scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=6, min_lr=1e-5)
     #CyclicExponentialLR(optimizer, 0.8, init_lr=args.lr) #ExponentialLR(optimizer, 0.9, last_epoch=-1) #CosineAnnealingLR(optimizer, 15, 1e-7) 
 
     best_iout, _, _ = validate(model, val_loader, criterion)
@@ -117,7 +118,7 @@ def train(args):
             optimizer.zero_grad()
             output, salt_out = model(img)
             #loss = criterion(output, target)
-            loss, _, _ = weighted_loss((output, salt_out), (target, salt_target))
+            loss, _, bce_loss = weighted_loss((output, salt_out), (target, salt_target))
             loss.backward()
             #salt_out = F.sigmoid(salt_out)
             #print(salt_out.squeeze(), salt_target)
@@ -131,8 +132,8 @@ def train(args):
             optimizer.step()
 
             train_loss += loss.item()
-            print('epoch {}: {}/{} batch loss: {:.4f}, avg loss: {:.4f} lr: {:.7f}'
-                .format(epoch, batch_size*(batch_idx+1), train_loader.num, loss.item(), train_loss/(batch_idx+1), current_lr), end='\r')
+            print('epoch {}: {}/{} batch loss: {:.4f}, B: {:.4f}, avg loss: {:.4f} lr: {:.7f}'
+                .format(epoch, batch_size*(batch_idx+1), train_loader.num, loss.item(), bce_loss, train_loss/(batch_idx+1), current_lr), end='\r')
         print('\n')
         print('epoch {}: {:.2f} minutes'.format(epoch, (time.time() - bg) / 60))
 
@@ -238,13 +239,13 @@ if __name__ == '__main__':
         level = log.INFO)
     #pdb.set_trace()
     parser = argparse.ArgumentParser(description='Salt segmentation')
-    parser.add_argument('--lr', default=0.0005, type=float, help='learning rate')
+    parser.add_argument('--lr', default=0.001, type=float, help='learning rate')
     parser.add_argument('--ifold', default=0, type=int, help='kfold index')
     parser.add_argument('--start_epoch', default=0, type=int, help='start epoch')
     parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')
     args = parser.parse_args()
 
     #find_threshold()
-    for i in range(3):
+    for i in range(1, 5):
         args.ifold = i
         train(args)
