@@ -455,11 +455,41 @@ class ConvBn2d(nn.Module):
         x = self.bn(x)
         return x
 
+class ChannelAttentionGate(nn.Module):
+    def __init__(self, channel, reduction=16):
+        super(ChannelAttentionGate, self).__init__()
+        self.fc1 = nn.Conv2d(channel, reduction, kernel_size=1, padding=0)
+        self.fc2 = nn.Conv2d(reduction, channel, kernel_size=1, padding=0)
+
+    def forward(self, x):
+        x = F.adaptive_avg_pool2d(x,1)
+        x = self.fc1(x)
+        x = F.relu(x, inplace=True)
+        x = self.fc2(x)
+        x = F.sigmoid(x)
+        return x
+
+class SpatialAttentionGate(nn.Module):
+    def __init__(self, channel, reduction=16):
+        super(SpatialAttentionGate, self).__init__()
+        self.fc1 = nn.Conv2d(channel, reduction, kernel_size=1, padding=0)
+        self.fc2 = nn.Conv2d(reduction, 1, kernel_size=1, padding=0)
+
+    def forward(self, x):
+        x = self.fc1(x)
+        x = F.relu(x, inplace=True)
+        x = self.fc2(x)
+        x = F.sigmoid(x)
+        #print(x.size())
+        return x
+
 class DecoderV3(nn.Module):
     def __init__(self, in_channels, middle_channels, out_channels, is_deconv=True):
         super(DecoderV3, self).__init__()
         self.conv1 = ConvBn2d(in_channels, middle_channels)
         self.conv2 = ConvBn2d(middle_channels, out_channels)
+        self.spatial_gate = SpatialAttentionGate(out_channels)
+        self.channel_gate = ChannelAttentionGate(out_channels)
 
     def forward(self, x, e=None):
         x = F.upsample(x, scale_factor=2, mode='bilinear', align_corners=True)
@@ -468,6 +498,10 @@ class DecoderV3(nn.Module):
 
         x = F.relu(self.conv1(x), inplace=True)
         x = F.relu(self.conv2(x), inplace=True)
+
+        g1 = self.spatial_gate(x)
+        g2 = self.channel_gate(x)
+        x = x*g1 + x*g2
 
         return x
 
