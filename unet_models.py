@@ -2,6 +2,7 @@ from torch import nn
 from torch.nn import functional as F
 import torch
 from torchvision import models
+from torchvision.models import resnet34, resnet101, resnet50, resnet152
 import torchvision
 import pdb
 
@@ -338,7 +339,7 @@ class UNetResNet(nn.Module):
     """
 
     def __init__(self, encoder_depth, num_classes=1, num_filters=32, dropout_2d=0.2,
-                 pretrained=False, is_deconv=False):
+                 pretrained=True, is_deconv=True):
         super().__init__()
         #pdb.set_trace()
         self.num_classes = num_classes
@@ -418,8 +419,212 @@ class UNetResNet(nn.Module):
             if isinstance(layer, nn.BatchNorm2d):
                 layer.eval()
 
+    def get_params(self, base_lr):
+        group1 = [self.conv1, self.conv2, self.conv3, self.conv4, self.conv5]
+        group2 = [self.dec0, self.dec1, self.dec2, self.dec3, self.dec4, self.dec5, self.center]
+        group3 = [self.classifier, self.final]
+
+        params1 = []
+        for x in group1:
+            for p in x.parameters():
+                params1.append(p)
+        
+        param_group1 = {'params': params1, 'lr': base_lr / 100}
+
+        params2 = []
+        for x in group2:
+            for p in x.parameters():
+                params2.append(p)
+        param_group2 = {'params': params2, 'lr': base_lr / 10}
+
+        params3 = []
+        for x in group3:
+            for p in x.parameters():
+                params3.append(p)
+        param_group3 = {'params': params3, 'lr': base_lr}
+
+        return [param_group1, param_group2, param_group3]
+
+class ConvBn2d(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=(3,3), stride=(1,1), padding=(1,1)):
+        super(ConvBn2d, self).__init__()
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding, bias=False)
+        self.bn = nn.BatchNorm2d(out_channels)
+    def forward(self, x):
+        x = self.conv(x)
+        x = self.bn(x)
+        return x
+
+class DecoderV3(nn.Module):
+    def __init__(self, in_channels, middle_channels, out_channels, is_deconv=True):
+        super(DecoderV3, self).__init__()
+        self.conv1 = ConvBn2d(in_channels, middle_channels)
+        self.conv2 = ConvBn2d(middle_channels, out_channels)
+
+    def forward(self, x, e=None):
+        x = F.upsample(x, scale_factor=2, mode='bilinear', align_corners=True)
+        if e is not None:
+            x = torch.cat([x,e], 1)
+
+        x = F.relu(self.conv1(x), inplace=True)
+        x = F.relu(self.conv2(x), inplace=True)
+
+        return x
+
+class UNetResNet2(nn.Module):
+    """PyTorch U-Net model using ResNet(34, 101 or 152) encoder.
+
+    UNet: https://arxiv.org/abs/1505.04597
+    ResNet: https://arxiv.org/abs/1512.03385
+    Proposed by Alexander Buslaev: https://www.linkedin.com/in/al-buslaev/
+
+    Args:
+            encoder_depth (int): Depth of a ResNet encoder (34, 101 or 152).
+            num_classes (int): Number of output classes.
+            num_filters (int, optional): Number of filters in the last layer of decoder. Defaults to 32.
+            dropout_2d (float, optional): Probability factor of dropout layer before output layer. Defaults to 0.2.
+            pretrained (bool, optional):
+                False - no pre-trained weights are being used.
+                True  - ResNet encoder is pre-trained on ImageNet.
+                Defaults to False.
+            is_deconv (bool, optional):
+                False: bilinear interpolation is used in decoder.
+                True: deconvolution is used in decoder.
+                Defaults to False.
+
+    """
+
+    def __init__(self, encoder_depth, num_classes=1, num_filters=32, dropout_2d=0.3,
+                 pretrained=True, is_deconv=True):
+        super().__init__()
+        #pdb.set_trace()
+        self.name = 'UNetResNetV2_'+str(encoder_depth)
+        self.num_classes = num_classes
+        self.dropout_2d = dropout_2d
+
+        if encoder_depth == 34:
+            self.encoder = resnet34(pretrained=pretrained)
+            bottom_channel_nr = 512
+        elif encoder_depth == 50:
+            self.encoder = resnet50(pretrained=pretrained)
+            bottom_channel_nr = 2048
+        elif encoder_depth == 101:
+            self.encoder = resnet101(pretrained=pretrained)
+            bottom_channel_nr = 2048
+        elif encoder_depth == 152:
+            self.encoder = resnet152(pretrained=pretrained)
+            bottom_channel_nr = 2048
+        else:
+            raise NotImplementedError('only 34, 101, 152 version of Resnet are implemented')
+
+        self.pool = nn.MaxPool2d(2, 2)
+        self.enc1 = nn.Sequential(self.encoder.conv1, self.encoder.bn1, self.encoder.relu)#self.pool)
+        self.enc2 = self.encoder.layer1
+        self.enc3 = self.encoder.layer2
+        self.enc4 = self.encoder.layer3
+        self.enc5 = self.encoder.layer4
+
+        #self.center = DecoderV3(bottom_channel_nr, num_filters * 8 * 2, num_filters * 8, is_deconv)
+        self.center = nn.Sequential(
+            ConvBn2d(bottom_channel_nr, bottom_channel_nr, kernel_size=(3,3), padding=1),
+            nn.ReLU(inplace=True),
+            ConvBn2d(bottom_channel_nr, num_filters*8),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=2, stride=2)
+        )
+
+        self.dec5 = DecoderV3(bottom_channel_nr + num_filters * 8, num_filters * 8 * 2, num_filters * 8, is_deconv)
+        self.dec4 = DecoderV3(bottom_channel_nr // 2 + num_filters * 8, num_filters * 8 * 2, num_filters * 8,
+                                   is_deconv)
+        self.dec3 = DecoderV3(bottom_channel_nr // 4 + num_filters * 8, num_filters * 4 * 2, num_filters * 2,
+                                   is_deconv)
+        self.dec2 = DecoderV3(bottom_channel_nr // 8 + num_filters * 2, num_filters * 2 * 2, num_filters * 2 * 2,
+                                   is_deconv)
+        self.dec1 = DecoderV3(num_filters * 2 * 2, num_filters * 2 * 2, num_filters, is_deconv)
+        self.dec0 = ConvBn2d(num_filters, num_filters)
+
+        self.final = nn.Conv2d(num_filters, num_classes, kernel_size=1)
+
+        self.logit = nn.Sequential(
+            nn.Conv2d(544, 64, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(64, 1, kernel_size=1, padding=0)
+        )
+
+        self.classifier = nn.Linear(128 * 128, 1)
+
+    def forward(self, x):
+        x = self.enc1(x)
+        e2 = self.enc2(x)
+        e3 = self.enc3(e2)
+        e4 = self.enc4(e3)
+        e5 = self.enc5(e4) #; print(e5.size())
+
+        #pool = self.pool(e5); remove
+        center = self.center(e5) #; print(center.size())
+
+        d5 = self.dec5(center, e5)
+
+        d4 = self.dec4(d5, e4)
+        d3 = self.dec3(d4, e3)
+        d2 = self.dec2(d3, e2)
+        d1 = self.dec1(d2)
+        #d0 = self.dec0(d1)
+        #d0 = F.relu(d0, inplace=True)
+
+        # Hyper column
+        f = torch.cat([
+            d1,
+            F.upsample(d2, scale_factor=2, mode='bilinear', align_corners=False),
+            F.upsample(d2, scale_factor=2, mode='bilinear', align_corners=False),
+            F.upsample(d2, scale_factor=2, mode='bilinear', align_corners=False),
+            F.upsample(d2, scale_factor=2, mode='bilinear', align_corners=False),
+        ], 1) 
+
+        f = F.dropout2d(f, p=self.dropout_2d)
+        #print('f:', f.size())
+        logit = self.logit(f)
+
+        #out = self.pool(d0)
+        #out = F.dropout2d(d0, p=self.dropout_2d)
+        #print(out.size())
+        cls_out = self.classifier(F.dropout(logit.view(logit.size(0), -1), p=0.25))
+
+        return logit, cls_out
+    
+    def freeze_bn(self):
+        '''Freeze BatchNorm layers.'''
+        for layer in self.modules():
+            if isinstance(layer, nn.BatchNorm2d):
+                layer.eval()
+    def get_params(self, base_lr):
+        group1 = [self.enc1, self.enc2, self.enc3, self.enc4, self.enc5]
+        group2 = [self.dec1, self.dec2, self.dec3, self.dec4, self.dec5, self.center]
+        group3 = [self.classifier, self.logit]
+
+        params1 = []
+        for x in group1:
+            for p in x.parameters():
+                params1.append(p)
+            
+        param_group1 = {'params': params1, 'lr': base_lr / 100}
+
+        params2 = []
+        for x in group2:
+            for p in x.parameters():
+                params2.append(p)
+        param_group2 = {'params': params2, 'lr': base_lr / 10}
+
+        params3 = []
+        for x in group3:
+            for p in x.parameters():
+                params3.append(p)
+        param_group3 = {'params': params3, 'lr': base_lr}
+
+        return [param_group1, param_group2, param_group3]
+
 def test():
-    model = UNetResNet(34, 1, pretrained=True, is_deconv=True).cuda()
+    model = UNetResNet2(34).cuda()
     model.freeze_bn()
     inputs = torch.randn(2,3,128,128).cuda()
     out, cls_taret = model(inputs)

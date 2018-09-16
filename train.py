@@ -11,13 +11,13 @@ from torch.optim.lr_scheduler import ExponentialLR, CosineAnnealingLR, _LRSchedu
 import pdb
 import settings
 from loader import get_train_loaders
-from unet_models import UNetResNet
+from unet_models import UNetResNet, UNetResNet2
 from lovasz_losses import lovasz_hinge, lovasz_softmax
 from postprocessing import crop_image, binarize, crop_image_softmax
 from metrics import intersection_over_union, intersection_over_union_thresholds
 
 epochs = 80
-batch_size = 24
+batch_size = 32
 MODEL_DIR = settings.MODEL_DIR
 #CKP = '{}/152/best_814_elu.pth'.format(MODEL_DIR)
 
@@ -50,37 +50,11 @@ def weighted_loss(output, target):
     return lovasz_loss, lovasz_loss.item(), bce_loss.item()
     #return bce_loss, lovasz_loss.item(), bce_loss.item()
 
-def get_params(model, base_lr):
-    group1 = [model.conv1, model.conv2, model.conv3, model.conv4, model.conv5]
-    group2 = [model.dec0, model.dec1, model.dec2, model.dec3, model.dec4, model.dec5]
-    group3 = [model.classifier, model.final]
-
-    params1 = []
-    for x in group1:
-        for p in x.parameters():
-            params1.append(p)
-    
-    param_group1 = {'params': params1, 'lr': base_lr / 100}
-
-    params2 = []
-    for x in group2:
-        for p in x.parameters():
-            params2.append(p)
-    param_group2 = {'params': params2, 'lr': base_lr / 10}
-
-    params3 = []
-    for x in group3:
-        for p in x.parameters():
-            params3.append(p)
-    param_group3 = {'params': params3, 'lr': base_lr}
-
-    return [param_group1, param_group2, param_group3]
-
 def train(args):
     print('start training...')
-    model_file = '{}/152_new/best_{}.pth'.format(MODEL_DIR, args.ifold)
+    model_file = '{}/34_new/best_{}.pth'.format(MODEL_DIR, args.ifold)
 
-    model = UNetResNet(152, pretrained=True, is_deconv=True)
+    model = UNetResNet2(34)
     #CKP = os.path.join(settings.MODEL_DIR, '34', 'classifier.pth')
     #CKP = os.path.join(MODEL_DIR, '152_new', 'best_814.pth')
     CKP = model_file
@@ -90,7 +64,7 @@ def train(args):
     model = model.cuda()
 
     criterion = lovasz_softmax #lovasz_hinge 
-    optimizer = optim.Adam(get_params(model, args.lr), lr=args.lr/10) #, weight_decay=0.0001)
+    optimizer = optim.Adam(model.get_params(args.lr), lr=args.lr/10) #, weight_decay=0.0001)
     #optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=0.0001)
 
     train_loader, val_loader = get_train_loaders(args.ifold, batch_size=batch_size, dev_mode=False)
@@ -246,6 +220,6 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     #find_threshold()
-    for i in range(1, 5):
+    for i in range(0, 5):
         args.ifold = i
         train(args)
