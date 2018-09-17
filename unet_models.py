@@ -342,6 +342,7 @@ class UNetResNet(nn.Module):
                  pretrained=True, is_deconv=True):
         super().__init__()
         #pdb.set_trace()
+        self.name = 'UNetResNet_'+str(encoder_depth)
         self.num_classes = num_classes
         self.dropout_2d = dropout_2d
 
@@ -575,9 +576,9 @@ class UNetResNet2(nn.Module):
         self.dec2 = DecoderV3(bottom_channel_nr // 8 + num_filters * 2, num_filters * 2 * 2, num_filters * 2 * 2,
                                    is_deconv)
         self.dec1 = DecoderV3(num_filters * 2 * 2, num_filters * 2 * 2, num_filters, is_deconv)
-        self.dec0 = ConvBn2d(num_filters, num_filters)
+        #self.dec0 = ConvBn2d(num_filters, num_filters)
 
-        self.final = nn.Conv2d(num_filters, num_classes, kernel_size=1)
+        #self.final = nn.Conv2d(num_filters, num_classes, kernel_size=1)
 
         self.logit = nn.Sequential(
             nn.Conv2d(736, 64, kernel_size=3, padding=1),
@@ -616,6 +617,7 @@ class UNetResNet2(nn.Module):
         ], 1) 
 
         f = F.dropout2d(f, p=self.dropout_2d)
+        #print(f.size())
         #print('f:', f.size())
         logit = self.logit(f)
 
@@ -657,13 +659,293 @@ class UNetResNet2(nn.Module):
 
         return [param_group1, param_group2, param_group3]
 
+
+
+class EncoderAttention(nn.Module):
+    def __init__(self, channels):
+        super(EncoderAttention, self).__init__()
+        self.spatial_gate = SpatialAttentionGate(channels)
+        self.channel_gate = ChannelAttentionGate(channels)
+
+    def forward(self, x):
+        g1 = self.spatial_gate(x)
+        g2 = self.channel_gate(x)
+        x = x*g1 + x*g2
+
+        return x
+
+class UNetResNetV3(nn.Module):
+    def __init__(self, encoder_depth, num_classes=1, num_filters=32, dropout_2d=0.2,
+                 pretrained=True, is_deconv=True):
+        super(UNetResNetV3, self).__init__()
+        #pdb.set_trace()
+        self.name = 'UNetResNetV3_'+str(encoder_depth)
+        self.num_classes = num_classes
+        self.dropout_2d = dropout_2d
+
+        if encoder_depth == 34:
+            self.encoder = torchvision.models.resnet34(pretrained=pretrained)
+            bottom_channel_nr = 512
+        elif encoder_depth == 50:
+            self.encoder = torchvision.models.resnet50(pretrained=pretrained)
+            bottom_channel_nr = 2048
+        elif encoder_depth == 101:
+            self.encoder = torchvision.models.resnet101(pretrained=pretrained)
+            bottom_channel_nr = 2048
+        elif encoder_depth == 152:
+            self.encoder = torchvision.models.resnet152(pretrained=pretrained)
+            bottom_channel_nr = 2048
+        else:
+            raise NotImplementedError('only 34, 101, 152 version of Resnet are implemented')
+
+        self.pool = nn.MaxPool2d(2, 2)
+
+        self.relu = nn.ReLU(inplace=True)
+
+        self.conv1 = nn.Sequential(self.encoder.conv1,
+                                   self.encoder.bn1,
+                                   self.encoder.relu,
+                                   self.pool)
+        self.conv2 = self.encoder.layer1
+
+        self.conv3 = self.encoder.layer2
+
+        self.conv4 = self.encoder.layer3
+
+        self.conv5 = self.encoder.layer4
+
+        self.center = DecoderV3(bottom_channel_nr, num_filters * 8 * 2, num_filters * 8, is_deconv)
+        self.dec5 = DecoderV3(bottom_channel_nr + num_filters * 8, num_filters * 8 * 2, num_filters * 8, is_deconv)
+        self.dec4 = DecoderV3(bottom_channel_nr // 2 + num_filters * 8, num_filters * 8 * 2, num_filters * 8,
+                                   is_deconv)
+        self.dec3 = DecoderV3(bottom_channel_nr // 4 + num_filters * 8, num_filters * 4 * 2, num_filters * 2,
+                                   is_deconv)
+        self.dec2 = DecoderV3(bottom_channel_nr // 8 + num_filters * 2, num_filters * 2 * 2, num_filters * 2 * 2,
+                                   is_deconv)
+        self.dec1 = DecoderV3(num_filters * 2 * 2, num_filters * 2 * 2, num_filters, is_deconv)
+        #self.dec0 = ConvRelu(num_filters, num_filters)
+        #self.final = nn.Conv2d(num_filters, num_classes, kernel_size=1)
+
+        self.logit = nn.Sequential(
+            EncoderAttention(736),
+            nn.Conv2d(736, 64, kernel_size=3, padding=1),
+            EncoderAttention(64),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(64, 1, kernel_size=1, padding=0)
+        )
+
+    def forward(self, x):
+        conv1 = self.conv1(x) #;print('conv1:', conv1.size())
+        conv2 = self.conv2(conv1) #;print('conv2:', conv2.size())
+        conv3 = self.conv3(conv2) #;print('conv3:', conv3.size())
+        conv4 = self.conv4(conv3) #;print('conv4:', conv4.size())
+        conv5 = self.conv5(conv4) #;print('conv5:', conv5.size())
+
+        pool = self.pool(conv5)
+        center = self.center(pool)
+
+        dec5 = self.dec5(torch.cat([center, conv5], 1))
+
+        dec4 = self.dec4(torch.cat([dec5, conv4], 1))
+        dec3 = self.dec3(torch.cat([dec4, conv3], 1))
+        dec2 = self.dec2(torch.cat([dec3, conv2], 1)) #print('dec2:', dec2.size())
+        dec1 = self.dec1(dec2) #print('dec1:', dec1.size())
+        #dec0 = self.dec0(dec1); print('dec0:', dec0.size())
+
+        f = torch.cat([
+            dec1,
+            F.upsample(dec2, scale_factor=2, mode='bilinear', align_corners=False),
+            F.upsample(dec3, scale_factor=4, mode='bilinear', align_corners=False),
+            F.upsample(dec4, scale_factor=8, mode='bilinear', align_corners=False),
+            F.upsample(dec5, scale_factor=16, mode='bilinear', align_corners=False),
+        ], 1) 
+
+        f = F.dropout2d(f, p=self.dropout_2d)
+        #out = self.pool(dec0)
+
+        return self.logit(f), None
+    
+    def freeze_bn(self):
+        '''Freeze BatchNorm layers.'''
+        for layer in self.modules():
+            if isinstance(layer, nn.BatchNorm2d):
+                layer.eval()
+
+    def get_params(self, base_lr):
+        group1 = [self.conv1, self.conv2, self.conv3, self.conv4, self.conv5]
+        group2 = [self.dec1, self.dec2, self.dec3, self.dec4, self.dec5, self.center]
+        group3 = [self.logit]
+
+        params1 = []
+        for x in group1:
+            for p in x.parameters():
+                params1.append(p)
+        
+        param_group1 = {'params': params1, 'lr': base_lr / 10}
+
+        params2 = []
+        for x in group2:
+            for p in x.parameters():
+                params2.append(p)
+        param_group2 = {'params': params2, 'lr': base_lr / 2}
+
+        params3 = []
+        for x in group3:
+            for p in x.parameters():
+                params3.append(p)
+        param_group3 = {'params': params3, 'lr': base_lr}
+
+        return [param_group1, param_group2, param_group3]
+
+
+
+class UNetResNetV4(nn.Module):
+    def __init__(self, encoder_depth, num_classes=1, num_filters=32, dropout_2d=0.2,
+                 pretrained=True, is_deconv=True):
+        super(UNetResNetV4, self).__init__()
+        #pdb.set_trace()
+        self.name = 'UNetResNetV4_'+str(encoder_depth)
+        self.num_classes = num_classes
+        self.dropout_2d = dropout_2d
+
+        if encoder_depth == 34:
+            self.encoder = torchvision.models.resnet34(pretrained=pretrained)
+            bottom_channel_nr = 512
+        elif encoder_depth == 50:
+            self.encoder = torchvision.models.resnet50(pretrained=pretrained)
+            bottom_channel_nr = 2048
+        elif encoder_depth == 101:
+            self.encoder = torchvision.models.resnet101(pretrained=pretrained)
+            bottom_channel_nr = 2048
+        elif encoder_depth == 152:
+            self.encoder = torchvision.models.resnet152(pretrained=pretrained)
+            bottom_channel_nr = 2048
+        else:
+            raise NotImplementedError('only 34, 101, 152 version of Resnet are implemented')
+
+        self.pool = nn.MaxPool2d(2, 2)
+
+        self.relu = nn.ReLU(inplace=True)
+
+        self.conv1 = nn.Sequential(self.encoder.conv1,
+                                   self.encoder.bn1,
+                                   self.encoder.relu,
+                                   self.pool)
+        self.att1 = EncoderAttention(num_filters*2)
+        self.conv2 = self.encoder.layer1
+        self.att2 = EncoderAttention(num_filters*8)
+
+        self.conv3 = self.encoder.layer2
+        self.att3 = EncoderAttention(num_filters*16)
+
+        self.conv4 = self.encoder.layer3
+        self.att4 = EncoderAttention(num_filters*32)
+
+        self.conv5 = self.encoder.layer4
+        self.att5 = EncoderAttention(num_filters*64)
+
+        self.center = DecoderV3(bottom_channel_nr, num_filters * 8 * 2, num_filters * 8, is_deconv)
+        self.dec5 = DecoderV3(bottom_channel_nr + num_filters * 8, num_filters * 8 * 2, num_filters * 8, is_deconv)
+        self.dec4 = DecoderV3(bottom_channel_nr // 2 + num_filters * 8, num_filters * 8 * 2, num_filters * 8,
+                                   is_deconv)
+        self.dec3 = DecoderV3(bottom_channel_nr // 4 + num_filters * 8, num_filters * 4 * 2, num_filters * 2,
+                                   is_deconv)
+        self.dec2 = DecoderV3(bottom_channel_nr // 8 + num_filters * 2, num_filters * 2 * 2, num_filters * 2 * 2,
+                                   is_deconv)
+        self.dec1 = DecoderV3(num_filters * 2 * 2, num_filters * 2 * 2, num_filters, is_deconv)
+        #self.dec0 = ConvRelu(num_filters, num_filters)
+        #self.final = nn.Conv2d(num_filters, num_classes, kernel_size=1)
+
+        self.logit = nn.Sequential(
+            EncoderAttention(736),
+            nn.Conv2d(736, 64, kernel_size=3, padding=1),
+            EncoderAttention(64),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(64, 1, kernel_size=1, padding=0)
+        )
+
+    def forward(self, x):
+        conv1 = self.conv1(x) #;print('conv1:', conv1.size())
+        att1 = self.att1(conv1) #; print('att1:', att1.size())
+        conv2 = self.conv2(att1) #;print('conv2:', conv2.size())
+        att2 = self.att2(conv2) #; print('att2:', att2.size())
+        conv3 = self.conv3(att2) #;print('conv3:', conv3.size())
+        att3 = self.att3(conv3) #; print('att3:', att3.size())
+        conv4 = self.conv4(att3) #;print('conv4:', conv4.size())
+        att4 = self.att4(conv4) #; print('att4:', att4.size())
+        conv5 = self.conv5(att4) #;print('conv5:', conv5.size())
+        att5 = self.att5(conv5) #; print('att5:', att5.size())
+
+        pool = self.pool(att5)
+        center = self.center(pool)
+
+        dec5 = self.dec5(torch.cat([center, att5], 1))
+
+        dec4 = self.dec4(torch.cat([dec5, att4], 1))
+        dec3 = self.dec3(torch.cat([dec4, att3], 1))
+        dec2 = self.dec2(torch.cat([dec3, att2], 1)); #print('dec2:', dec2.size())
+        dec1 = self.dec1(dec2); #print('dec1:', dec1.size())
+        #dec0 = self.dec0(dec1); print('dec0:', dec0.size())
+
+        f = torch.cat([
+            dec1,
+            F.upsample(dec2, scale_factor=2, mode='bilinear', align_corners=False),
+            F.upsample(dec3, scale_factor=4, mode='bilinear', align_corners=False),
+            F.upsample(dec4, scale_factor=8, mode='bilinear', align_corners=False),
+            F.upsample(dec5, scale_factor=16, mode='bilinear', align_corners=False),
+        ], 1) 
+
+        f = F.dropout2d(f, p=self.dropout_2d)
+        #out = self.pool(dec0)
+
+        return self.logit(f), None
+    
+    def freeze_bn(self):
+        '''Freeze BatchNorm layers.'''
+        for layer in self.modules():
+            if isinstance(layer, nn.BatchNorm2d):
+                layer.eval()
+
+    def get_params(self, base_lr):
+        group1 = [self.conv1, self.conv2, self.conv3, self.conv4, self.conv5]
+        group2 = [self.dec1, self.dec2, self.dec3, self.dec4, self.dec5, self.center]
+        group3 = [self.att1, self.att2, self.att3, self.att4, self.att5,]
+        group4 = [self.logit]
+
+        params1 = []
+        for x in group1:
+            for p in x.parameters():
+                params1.append(p)
+        
+        param_group1 = {'params': params1, 'lr': base_lr / 100}
+
+        params2 = []
+        for x in group2:
+            for p in x.parameters():
+                params2.append(p)
+        param_group2 = {'params': params2, 'lr': base_lr / 10}
+
+        params3 = []
+        for x in group3:
+            for p in x.parameters():
+                params3.append(p)
+        param_group3 = {'params': params3, 'lr': base_lr / 20}
+
+        params4 = []
+        for x in group4:
+            for p in x.parameters():
+                params4.append(p)
+        param_group4 = {'params': params4, 'lr': base_lr}
+
+        return [param_group1, param_group2, param_group3, param_group4]
+
 def test():
-    model = UNetResNet2(34).cuda()
+    model = UNetResNetV3(152).cuda()
     model.freeze_bn()
     inputs = torch.randn(2,3,128,128).cuda()
-    out, cls_taret = model(inputs)
+    out, _ = model(inputs)
     #print(model)
-    print(out.size(), cls_taret.size())
+    print(out.size()) #, cls_taret.size())
     #print(out)
 
 
