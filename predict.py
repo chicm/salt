@@ -75,7 +75,7 @@ def ensemble(checkpoints):
     y_pred_test = generate_preds_softmax(tmp2, (settings.ORIG_H, settings.ORIG_W))
 
     submission = create_submission(test_loader.meta, y_pred_test)
-    submission_filepath = 'ensemble_152_new.csv'
+    submission_filepath = 'ensemble_152_new2.csv'
     submission.to_csv(submission_filepath, index=None, encoding='utf-8')
 
 def generate_preds(outputs, target_size):
@@ -115,7 +115,7 @@ if __name__ == '__main__':
     ]
     '''
     checkpoints = [
-        r'G:\salt\models\152_new\best_0.pth', r'G:\salt\models\152_new\best_1.pth'
+        r'G:\salt\models\152_new\best_0.pth', r'G:\salt\models\152_new\best_1.pth', r'G:\salt\models\152_new\best_2.pth'
     ]
     #predict()
     ensemble(checkpoints)

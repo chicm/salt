@@ -16,7 +16,7 @@ from lovasz_losses import lovasz_hinge, lovasz_softmax
 from postprocessing import crop_image, binarize, crop_image_softmax
 from metrics import intersection_over_union, intersection_over_union_thresholds
 
-epochs = 80
+epochs = 100
 batch_size = 24
 MODEL_DIR = settings.MODEL_DIR
 #CKP = '{}/152/best_814_elu.pth'.format(MODEL_DIR)
@@ -246,6 +246,6 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     #find_threshold()
-    for i in range(1, 5):
+    for i in range(2, 10):
         args.ifold = i
         train(args)
