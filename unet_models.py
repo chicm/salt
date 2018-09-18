@@ -689,31 +689,26 @@ class UNetResNetV3(nn.Module):
 
         self.conv5 = self.encoder.layer4
 
-        self.center = DecoderV3(bottom_channel_nr, num_filters * 8 * 2, num_filters * 8, is_deconv)
-        self.dec5 = DecoderV3(bottom_channel_nr + num_filters * 8, num_filters * 8 * 2, num_filters * 8, is_deconv)
-        self.dec4 = DecoderV3(bottom_channel_nr // 2 + num_filters * 8, num_filters * 8 * 2, num_filters * 8,
-                                   is_deconv)
-        self.dec3 = DecoderV3(bottom_channel_nr // 4 + num_filters * 8, num_filters * 4 * 2, num_filters * 2,
-                                   is_deconv)
-        self.dec2 = DecoderV3(bottom_channel_nr // 8 + num_filters * 2, num_filters * 2 * 2, num_filters * 2 * 2,
-                                   is_deconv)
-        self.dec1 = DecoderV3(num_filters * 2 * 2, num_filters * 2 * 2, num_filters, is_deconv)
+        self.center = DecoderAtt(bottom_channel_nr, num_filters * 8 * 2, num_filters * 8)
+        self.dec5 = DecoderAtt(bottom_channel_nr + num_filters * 8, num_filters * 8 * 2, num_filters * 8)
+        self.dec4 = DecoderAtt(bottom_channel_nr // 2 + num_filters * 8, num_filters * 8 * 2, num_filters * 8)
+        self.dec3 = DecoderAtt(bottom_channel_nr // 4 + num_filters * 8, num_filters * 4 * 2, num_filters * 2)
+        self.dec2 = DecoderAtt(bottom_channel_nr // 8 + num_filters * 2, num_filters * 2 * 2, num_filters * 2 * 2)
+        self.dec1 = DecoderAtt(num_filters * 2 * 2, num_filters * 2 * 2, num_filters)
         #self.dec0 = ConvRelu(num_filters, num_filters)
         #self.final = nn.Conv2d(num_filters, num_classes, kernel_size=1)
 
-        #self.logit = nn.Sequential(
-        #    EncoderAttention(736),
-        #    nn.Conv2d(736, 64, kernel_size=3, padding=1),
-        #    EncoderAttention(64),
-        #    nn.ReLU(inplace=True),
-        #    nn.Conv2d(64, 1, kernel_size=1, padding=0)
-        #)
         self.logit = nn.Sequential(
-            nn.Conv2d(num_filters, num_filters, kernel_size=3, padding=1),
-            EncoderAttention(num_filters),
+            ConvBn2d(736, 64, kernel_size=3, padding=1),
             nn.ReLU(inplace=True),
-            nn.Conv2d(num_filters, 1, kernel_size=1, padding=0)
+            nn.Conv2d(64, 1, kernel_size=1, padding=0)
         )
+        #self.logit = nn.Sequential(
+        #    nn.Conv2d(num_filters, num_filters, kernel_size=3, padding=1),
+        #    EncoderAttention(num_filters),
+        #    nn.ReLU(inplace=True),
+        #    nn.Conv2d(num_filters, 1, kernel_size=1, padding=0)
+        #)
 
     def forward(self, x):
         conv1 = self.conv1(x) #;print('conv1:', conv1.size())
@@ -733,15 +728,15 @@ class UNetResNetV3(nn.Module):
         dec1 = self.dec1(dec2) #; print('dec1:', dec1.size())
         #dec0 = self.dec0(dec1); print('dec0:', dec0.size())
 
-        #f = torch.cat([
-        #    dec1,
-        #    F.upsample(dec2, scale_factor=2, mode='bilinear', align_corners=False),
-        #    F.upsample(dec3, scale_factor=4, mode='bilinear', align_corners=False),
-        #    F.upsample(dec4, scale_factor=8, mode='bilinear', align_corners=False),
-        #    F.upsample(dec5, scale_factor=16, mode='bilinear', align_corners=False),
-        #], 1) 
+        f = torch.cat([
+            dec1,
+            F.upsample(dec2, scale_factor=2, mode='bilinear', align_corners=False),
+            F.upsample(dec3, scale_factor=4, mode='bilinear', align_corners=False),
+            F.upsample(dec4, scale_factor=8, mode='bilinear', align_corners=False),
+            F.upsample(dec5, scale_factor=16, mode='bilinear', align_corners=False),
+        ], 1) 
 
-        f = F.dropout2d(dec1, p=self.dropout_2d)
+        f = F.dropout2d(f, p=self.dropout_2d)
         #out = self.pool(dec0)
 
         return self.logit(f), None
@@ -921,7 +916,7 @@ class UNetResNetV4(nn.Module):
         return [param_group1, param_group2, param_group3, param_group4]
 
 def test():
-    model = UNetResNetAtt(34).cuda()
+    model = UNetResNetV3(34).cuda()
     model.freeze_bn()
     inputs = torch.randn(2,3,128,128).cuda()
     out, _ = model(inputs)
