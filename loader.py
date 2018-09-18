@@ -35,11 +35,13 @@ class ImageDataset(data.Dataset):
         ])
 
     def __getitem__(self, index):
-        img_fn = self.img_filenames[index]
+        base_img_fn = self.img_filenames[index].split('\\')[-1]
+        img_fn = os.path.join(TRAIN_IMG_DIR, base_img_fn)
         img = self.load_image(img_fn)
 
         if self.train_mode:
-            mask_fn = self.mask_filenames[index]
+            base_mask_fn = self.mask_filenames[index].split('\\')[-1]
+            mask_fn = os.path.join(TRAIN_MASK_DIR, base_mask_fn)
             mask = self.load_image(mask_fn, True)
             img, mask = self.aug_image(img, mask)
             return img, mask, self.salt_exists[index]

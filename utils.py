@@ -74,7 +74,8 @@ def encode_rle(predictions):
 def read_masks(masks_filepaths):
     masks = []
     for mask_filepath in masks_filepaths:
-        mask = Image.open(mask_filepath)
+        base_filename = mask_filepath.split('\\')[-1]
+        mask = Image.open(os.path.join(settings.TRAIN_MASK_DIR, base_filename))
         mask = np.asarray(mask.convert('L').point(lambda x: 0 if x < 128 else 1)).astype(np.uint8)
         masks.append(mask)
     return masks
