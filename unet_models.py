@@ -726,12 +726,18 @@ class UNetResNetV3(nn.Module):
         #self.dec0 = ConvRelu(num_filters, num_filters)
         #self.final = nn.Conv2d(num_filters, num_classes, kernel_size=1)
 
+        #self.logit = nn.Sequential(
+        #    EncoderAttention(736),
+        #    nn.Conv2d(736, 64, kernel_size=3, padding=1),
+        #    EncoderAttention(64),
+        #    nn.ReLU(inplace=True),
+        #    nn.Conv2d(64, 1, kernel_size=1, padding=0)
+        #)
         self.logit = nn.Sequential(
-            EncoderAttention(736),
-            nn.Conv2d(736, 64, kernel_size=3, padding=1),
-            EncoderAttention(64),
+            nn.Conv2d(num_filters, num_filters, kernel_size=3, padding=1),
+            EncoderAttention(num_filters),
             nn.ReLU(inplace=True),
-            nn.Conv2d(64, 1, kernel_size=1, padding=0)
+            nn.Conv2d(num_filters, 1, kernel_size=1, padding=0)
         )
 
     def forward(self, x):
@@ -749,18 +755,18 @@ class UNetResNetV3(nn.Module):
         dec4 = self.dec4(torch.cat([dec5, conv4], 1))
         dec3 = self.dec3(torch.cat([dec4, conv3], 1))
         dec2 = self.dec2(torch.cat([dec3, conv2], 1)) #print('dec2:', dec2.size())
-        dec1 = self.dec1(dec2) #print('dec1:', dec1.size())
+        dec1 = self.dec1(dec2) #; print('dec1:', dec1.size())
         #dec0 = self.dec0(dec1); print('dec0:', dec0.size())
 
-        f = torch.cat([
-            dec1,
-            F.upsample(dec2, scale_factor=2, mode='bilinear', align_corners=False),
-            F.upsample(dec3, scale_factor=4, mode='bilinear', align_corners=False),
-            F.upsample(dec4, scale_factor=8, mode='bilinear', align_corners=False),
-            F.upsample(dec5, scale_factor=16, mode='bilinear', align_corners=False),
-        ], 1) 
+        #f = torch.cat([
+        #    dec1,
+        #    F.upsample(dec2, scale_factor=2, mode='bilinear', align_corners=False),
+        #    F.upsample(dec3, scale_factor=4, mode='bilinear', align_corners=False),
+        #    F.upsample(dec4, scale_factor=8, mode='bilinear', align_corners=False),
+        #    F.upsample(dec5, scale_factor=16, mode='bilinear', align_corners=False),
+        #], 1) 
 
-        f = F.dropout2d(f, p=self.dropout_2d)
+        f = F.dropout2d(dec1, p=self.dropout_2d)
         #out = self.pool(dec0)
 
         return self.logit(f), None

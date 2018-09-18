@@ -17,8 +17,8 @@ from dice_losses import mixed_dice_bce_loss
 from postprocessing import crop_image, binarize, crop_image_softmax
 from metrics import intersection_over_union, intersection_over_union_thresholds
 
-epochs = 100
-batch_size = 24
+epochs = 200
+batch_size = 32
 MODEL_DIR = settings.MODEL_DIR
 
 class CyclicExponentialLR(_LRScheduler):
@@ -49,7 +49,7 @@ def weighted_loss(output, target, epoch=0):
 def train(args):
     print('start training...')
     
-    model = UNetResNetV3(34)
+    model = UNetResNetV3(152)
     model_file = os.path.join(MODEL_DIR, model.name, 'best_{}.pth'.format(args.ifold))
     parent_dir = os.path.dirname(model_file)
     if not os.path.exists(parent_dir):
@@ -67,7 +67,7 @@ def train(args):
     train_loader, val_loader = get_train_loaders(args.ifold, batch_size=batch_size, dev_mode=False)
 
     # CyclicExponentialLR(optimizer, 0.9, init_lr=args.lr)
-    lr_scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=6, min_lr=2e-4)
+    lr_scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=6, min_lr=5e-6)
     #CyclicExponentialLR(optimizer, 0.8, init_lr=args.lr) #ExponentialLR(optimizer, 0.9, last_epoch=-1) #CosineAnnealingLR(optimizer, 15, 1e-7) 
 
     best_iout, _, _ = validate(model, val_loader)
@@ -207,7 +207,7 @@ if __name__ == '__main__':
         level = log.INFO)
     #pdb.set_trace()
     parser = argparse.ArgumentParser(description='Salt segmentation')
-    parser.add_argument('--lr', default=0.0005, type=float, help='learning rate')
+    parser.add_argument('--lr', default=0.001, type=float, help='learning rate')
     parser.add_argument('--ifold', default=0, type=int, help='kfold index')
     parser.add_argument('--start_epoch', default=0, type=int, help='start epoch')
     parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')
