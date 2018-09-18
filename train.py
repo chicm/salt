@@ -68,8 +68,8 @@ def train(args):
 
     train_loader, val_loader = get_train_loaders(args.ifold, batch_size=batch_size, dev_mode=False)
 
-    #lr_scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=6, min_lr=5e-6)
-    lr_scheduler = CosineAnnealingLR(optimizer, 10, 1e-6) 
+    lr_scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=5, min_lr=5e-6)
+    #lr_scheduler = CosineAnnealingLR(optimizer, 10, 1e-6) 
     #ExponentialLR(optimizer, 0.9, last_epoch=-1) #CosineAnnealingLR(optimizer, 15, 1e-7) 
 
     best_iout, _, _ = validate(model, val_loader)
@@ -127,6 +127,7 @@ def get_lrs(optimizer):
     lrs = []
     for pgs in optimizer.state_dict()['param_groups']:
         lrs.append(pgs['lr'])
+    lrs = ['{:.6f}'.format(x) for x in lrs]
     return lrs
 
 def validate(model, val_loader, epoch=0, threshold=0.5):
@@ -202,7 +203,7 @@ if __name__ == '__main__':
     
     #pdb.set_trace()
     parser = argparse.ArgumentParser(description='Salt segmentation')
-    parser.add_argument('--lr', default=0.0002, type=float, help='learning rate')
+    parser.add_argument('--lr', default=0.002, type=float, help='learning rate')
     parser.add_argument('--ifold', default=0, type=int, help='kfold index')
     parser.add_argument('--start_epoch', default=0, type=int, help='start epoch')
     parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')
