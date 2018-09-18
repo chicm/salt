@@ -11,7 +11,7 @@ from torch.optim.lr_scheduler import ExponentialLR, CosineAnnealingLR, _LRSchedu
 import pdb
 import settings
 from loader import get_train_loaders
-from unet_models import UNetResNet, UNetResNet2, UNetResNetV3
+from unet_models import UNetResNet, UNetResNetAtt, UNetResNetV3
 from lovasz_losses import lovasz_hinge, lovasz_softmax
 from dice_losses import mixed_dice_bce_loss
 from postprocessing import crop_image, binarize, crop_image_softmax
@@ -43,13 +43,15 @@ def weighted_loss(output, target, epoch=0):
     lovasz_loss = lovasz_hinge(mask_output, mask_target)
     dice_loss = mixed_dice_bce_loss(mask_output, mask_target)
     #print(bce_loss, lovasz_loss)
-
-    return lovasz_loss #, lovasz_loss.item(), bce_loss.item()
+    if epoch < 5:
+        return dice_loss
+    else:
+        return lovasz_loss #, lovasz_loss.item(), bce_loss.item()
 
 def train(args):
     print('start training...')
     
-    model = UNetResNetV3(152)
+    model = UNetResNetAtt(152)
     model_file = os.path.join(MODEL_DIR, model.name, 'best_{}.pth'.format(args.ifold))
     parent_dir = os.path.dirname(model_file)
     if not os.path.exists(parent_dir):
@@ -66,9 +68,9 @@ def train(args):
 
     train_loader, val_loader = get_train_loaders(args.ifold, batch_size=batch_size, dev_mode=False)
 
-    # CyclicExponentialLR(optimizer, 0.9, init_lr=args.lr)
-    lr_scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=6, min_lr=5e-6)
-    #CyclicExponentialLR(optimizer, 0.8, init_lr=args.lr) #ExponentialLR(optimizer, 0.9, last_epoch=-1) #CosineAnnealingLR(optimizer, 15, 1e-7) 
+    #lr_scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=6, min_lr=5e-6)
+    lr_scheduler = CosineAnnealingLR(optimizer, 10, 1e-6) 
+    #ExponentialLR(optimizer, 0.9, last_epoch=-1) #CosineAnnealingLR(optimizer, 15, 1e-7) 
 
     best_iout, _, _ = validate(model, val_loader)
     #model.classifier.train()
@@ -89,11 +91,9 @@ def train(args):
             optimizer.zero_grad()
             output, salt_out = model(img)
             #loss = criterion(output, target)
-            loss = weighted_loss((output, salt_out), (target, salt_target))
+            loss = weighted_loss((output, salt_out), (target, salt_target), epoch=epoch)
             loss.backward()
-            #salt_out = F.sigmoid(salt_out)
-            #print(salt_out.squeeze(), salt_target)
-
+ 
             # adamW
             wd = 0.0001
             for group in optimizer.param_groups:
@@ -108,7 +108,7 @@ def train(args):
         print('\n')
         print('epoch {}: {:.2f} minutes'.format(epoch, (time.time() - bg) / 60))
 
-        iout, iou, val_loss = validate(model, val_loader)
+        iout, iou, val_loss = validate(model, val_loader, epoch=epoch)
 
         if iout > best_iout:
             best_iout = iout
@@ -129,7 +129,7 @@ def get_lrs(optimizer):
         lrs.append(pgs['lr'])
     return lrs
 
-def validate(model, val_loader, threshold=0.5):
+def validate(model, val_loader, epoch=0, threshold=0.5):
     model.eval()
     print('validating...')
     outputs = []
@@ -140,8 +140,7 @@ def validate(model, val_loader, threshold=0.5):
             output, salt_out = model(img)
             #print(output.size(), salt_out.size())
 
-            loss = weighted_loss((output, salt_out), (target, salt_target))
-            #print(salt_out.squeeze(), salt_target)
+            loss = weighted_loss((output, salt_out), (target, salt_target), epoch=epoch)
             val_loss += loss.item()
             output = torch.sigmoid(output)
             
@@ -200,20 +199,20 @@ def generate_preds_softmax(outputs, target_size, threshold=0.5):
 
 if __name__ == '__main__':
     
-    log.basicConfig(
-        filename = 'trainlog.txt', 
-        format   = '%(asctime)s : %(message)s',
-        datefmt  = '%Y-%m-%d %H:%M:%S', 
-        level = log.INFO)
+    
     #pdb.set_trace()
     parser = argparse.ArgumentParser(description='Salt segmentation')
-    parser.add_argument('--lr', default=0.001, type=float, help='learning rate')
+    parser.add_argument('--lr', default=0.0002, type=float, help='learning rate')
     parser.add_argument('--ifold', default=0, type=int, help='kfold index')
     parser.add_argument('--start_epoch', default=0, type=int, help='start epoch')
     parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')
     args = parser.parse_args()
 
+    log.basicConfig(
+        filename = 'trainlog_{}.txt'.format(args.ifold), 
+        format   = '%(asctime)s : %(message)s',
+        datefmt  = '%Y-%m-%d %H:%M:%S', 
+        level = log.INFO)
+
     #find_threshold()
-    for i in range(0, 5):
-        args.ifold = i
-        train(args)
+    train(args)
