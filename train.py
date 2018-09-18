@@ -12,13 +12,14 @@ import pdb
 import settings
 from loader import get_train_loaders
 from unet_models import UNetResNet, UNetResNetAtt, UNetResNetV3
+from unet_se import UNetResNetSE
 from lovasz_losses import lovasz_hinge, lovasz_softmax
 from dice_losses import mixed_dice_bce_loss
 from postprocessing import crop_image, binarize, crop_image_softmax
 from metrics import intersection_over_union, intersection_over_union_thresholds
 
 epochs = 200
-batch_size = 32
+batch_size = 16
 MODEL_DIR = settings.MODEL_DIR
 
 class CyclicExponentialLR(_LRScheduler):
@@ -51,7 +52,7 @@ def weighted_loss(output, target, epoch=0):
 def train(args):
     print('start training...')
     
-    model = UNetResNetAtt(152)
+    model = UNetResNetSE(152)
     model_file = os.path.join(MODEL_DIR, model.name, 'best_{}.pth'.format(args.ifold))
     parent_dir = os.path.dirname(model_file)
     if not os.path.exists(parent_dir):
@@ -68,11 +69,11 @@ def train(args):
 
     train_loader, val_loader = get_train_loaders(args.ifold, batch_size=batch_size, dev_mode=False)
 
-    lr_scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=5, min_lr=5e-6)
-    #lr_scheduler = CosineAnnealingLR(optimizer, 10, 1e-6) 
+    #lr_scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=5, min_lr=1e-5)
+    lr_scheduler = CosineAnnealingLR(optimizer, 6, eta_min=2e-6) 
     #ExponentialLR(optimizer, 0.9, last_epoch=-1) #CosineAnnealingLR(optimizer, 15, 1e-7) 
 
-    best_iout, _, _ = validate(model, val_loader)
+    best_iout, _, _ = validate(model, val_loader, args.start_epoch)
     #model.classifier.train()
     model.train()
     lr_scheduler.step(best_iout)
@@ -120,7 +121,8 @@ def train(args):
 
         model.train()
         #model.classifier.train()
-        lr_scheduler.step(iout)
+        #lr_scheduler.step(iout)
+        lr_scheduler.step()
     del model, train_loader, val_loader, optimizer, lr_scheduler
         
 def get_lrs(optimizer):
@@ -203,7 +205,7 @@ if __name__ == '__main__':
     
     #pdb.set_trace()
     parser = argparse.ArgumentParser(description='Salt segmentation')
-    parser.add_argument('--lr', default=0.002, type=float, help='learning rate')
+    parser.add_argument('--lr', default=0.0002, type=float, help='learning rate')
     parser.add_argument('--ifold', default=0, type=int, help='kfold index')
     parser.add_argument('--start_epoch', default=0, type=int, help='start epoch')
     parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')

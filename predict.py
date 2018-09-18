@@ -15,67 +15,75 @@ batch_size = 128
 #CKP = 'models/152/best_814_elu.pth'
 CKP = os.path.join(settings.MODEL_DIR, '152_new', 'best_0.pth')
 
+def do_tta_predict(model):
+    '''
+    return 18000x128x128 np array
+    '''
+    model.eval()
+    preds = []
+    meta = None
+
+    # i is tta index, 0: no change, 1: horizon flip, 2: vertical flip, 3: do both
+    for flip_index in range(4):
+        test_loader = get_test_loader(batch_size, index=flip_index, dev_mode=False)
+        meta = test_loader.meta
+        print('predicting...', CKP, flip_index)
+        outputs = None
+        with torch.no_grad():
+            for i, img in enumerate(test_loader):
+                img = img.cuda()
+                output, _ = model(img)
+                output = torch.sigmoid(output)
+                if outputs is None:
+                    outputs = output.squeeze()
+                else:
+                    outputs = torch.cat([outputs, output.squeeze()], 0)
+
+                print('{} / {}'.format(batch_size*(i+1), test_loader.num), end='\r')
+        outputs = outputs.cpu().numpy()
+        # flip back masks
+        if flip_index == 1:
+            outputs = np.flip(outputs, 2)
+        elif flip_index == 2:
+            outputs = np.flip(outputs, 1)
+        elif flip_index == 3:
+            outputs = np.flip(outputs, 2)
+            outputs = np.flip(outputs, 1)
+        #print(outputs.shape)
+        preds.append(outputs)
+    return np.mean(preds, 0), meta
+
 def predict():
     model = UNetResNet(152, pretrained=True, is_deconv=True)
     print('loading...', CKP)
     model.load_state_dict(torch.load(CKP))
     model = model.cuda()
 
-    test_loader = get_test_loader(batch_size)
+    pred, meta = do_tta_predict(model)
+    print(pred.shape)
+    y_pred_test = generate_preds_softmax(pred, (settings.ORIG_H, settings.ORIG_W))
 
-    model.eval()
-    print('predicting...')
-    outputs = []
-    with torch.no_grad():
-        for i, img in enumerate(test_loader):
-            img = img.cuda()
-            output, _ = model(img)
-            output = torch.sigmoid(output)
-
-            for o in output.cpu():
-                outputs.append(o.squeeze().numpy())
-            print(f'{batch_size*(i+1)} / {test_loader.num}', end='\r')
-
-    y_pred_test = generate_preds_softmax(outputs, (settings.ORIG_H, settings.ORIG_W))
-
-    submission = create_submission(test_loader.meta, y_pred_test)
-    submission_filepath = 'sub_new2.csv'
+    submission = create_submission(meta, y_pred_test)
+    submission_filepath = 'sub_tta_1.csv'
     submission.to_csv(submission_filepath, index=None, encoding='utf-8')
 
+
 def ensemble(checkpoints):
-    model = UNetResNet(152, 2, pretrained=True, is_deconv=True)
+    model = UNetResNet(152, pretrained=True, is_deconv=True)
 
     preds = []
+    meta = None
     for checkpoint in checkpoints:
         model.load_state_dict(torch.load(checkpoint))
         model = model.cuda()
 
-        test_loader = get_test_loader(batch_size)
+        pred, meta = do_tta_predict(model)
+        preds.append(pred)
 
-        model.eval()
-        print('predicting {}...'.format(checkpoint))
-        outputs = []
-        with torch.no_grad():
-            for i, img in enumerate(test_loader):
-                img = img.cuda()
-                output, _ = model(img)
-                output = torch.sigmoid(output)
+    y_pred_test = generate_preds_softmax(np.mean(preds, 0), (settings.ORIG_H, settings.ORIG_W))
 
-                for o in output.cpu():
-                    outputs.append(o.squeeze().numpy())
-                print(f'{batch_size*(i+1)} / {test_loader.num}', end='\r')
-        preds.append(np.array(outputs).astype(np.float16))
-        #print(preds[0].dtype)
-    del model
-    tmp = np.mean(preds, 0)
-    tmp2 = []
-    for i in range(len(tmp)):
-        tmp2.append(tmp[i])
-
-    y_pred_test = generate_preds_softmax(tmp2, (settings.ORIG_H, settings.ORIG_W))
-
-    submission = create_submission(test_loader.meta, y_pred_test)
-    submission_filepath = 'ensemble_039.csv'
+    submission = create_submission(meta, y_pred_test)
+    submission_filepath = 'ensemble_tta_1.csv'
     submission.to_csv(submission_filepath, index=None, encoding='utf-8')
 
 def generate_preds(outputs, target_size):
@@ -99,19 +107,9 @@ def generate_preds_softmax(outputs, target_size, threshold=0.5):
     return preds
 
 if __name__ == '__main__':
-    '''
     checkpoints = [
-        r'G:\salt\models\152\best_0.pth', r'G:\salt\models\152\best_1.pth',
-        r'G:\salt\models\152\best_2.pth', r'G:\salt\models\152\best_3.pth', 
-        r'G:\salt\models\152\best_4.pth', r'G:\salt\models\152\best_5.pth',
-        r'G:\salt\models\152\best_6.pth', r'G:\salt\models\152\best_7.pth',
-        r'G:\salt\models\152\best_8.pth', r'G:\salt\models\152\best_9.pth',
+        r'G:\salt\models\152_new\best_0.pth', r'G:\salt\models\152_new\best_1.pth',
+        r'G:\salt\models\152_new\best_2.pth'
     ]
-    '''
-    checkpoints = [
-        r'G:\salt\models\152\ensemble_822\best_0.pth', r'G:\salt\models\152\ensemble_822\best_1.pth',
-        r'G:\salt\models\152\ensemble_822\best_2.pth', r'G:\salt\models\152\ensemble_822\best_3.pth',
-        r'G:\salt\models\152\ensemble_822\best_4.pth'
-    ]
-    predict()
-    #ensemble(checkpoints)
+    #predict()
+    ensemble(checkpoints)

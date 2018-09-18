@@ -36,7 +36,10 @@ class ImageDataset(data.Dataset):
 
     def __getitem__(self, index):
         base_img_fn = self.img_filenames[index].split('\\')[-1]
-        img_fn = os.path.join(TRAIN_IMG_DIR, base_img_fn)
+        if self.train_mode:
+            img_fn = os.path.join(TRAIN_IMG_DIR, base_img_fn)
+        else:
+            img_fn = os.path.join(TEST_IMG_DIR, base_img_fn)
         img = self.load_image(img_fn)
 
         if self.train_mode:
@@ -116,11 +119,22 @@ def to_tensor(x):
     x_ = torch.from_numpy(x_)
     return x_
 
-image_transform = transforms.Compose([transforms.Grayscale(num_output_channels=3),
-                                          transforms.ToTensor(),
-                                          transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                                               std=[0.229, 0.224, 0.225]),
-                                    ])
+img_transforms = [
+    transforms.Grayscale(num_output_channels=3),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ]
+
+def get_tta_transforms(index):
+    tta_transforms = {
+        0: [],
+        1: [transforms.RandomHorizontalFlip(p=2.)],
+        2: [transforms.RandomVerticalFlip(p=2.)],
+        3: [transforms.RandomHorizontalFlip(p=2.), transforms.RandomVerticalFlip(p=2.)]
+    }
+    return transforms.Compose([*(tta_transforms[index]), *img_transforms])
+
+image_transform = transforms.Compose(img_transforms)
 mask_transform = transforms.Compose([transforms.Lambda(to_array),
                                          transforms.Lambda(to_tensor),
                                     ])
@@ -156,10 +170,13 @@ def get_train_loaders(ifold, batch_size=8, dev_mode=False):
 
     return train_loader, val_loader
 
-def get_test_loader(batch_size=16):
-    test_set = ImageDataset(False, get_test_meta(),
+def get_test_loader(batch_size=16, index=0, dev_mode=False):
+    test_meta = get_test_meta()
+    if dev_mode:
+        test_meta = test_meta.iloc[:10]
+    test_set = ImageDataset(False, test_meta,
                             image_augment=ImgAug(aug.pad_to_fit_net(64, 'reflect')),
-                            image_transform=image_transform)
+                            image_transform=get_tta_transforms(index))
     test_loader = data.DataLoader(test_set, batch_size=batch_size, shuffle=False, num_workers=4, collate_fn=test_set.collate_fn, drop_last=False)
     test_loader.num = len(test_set)
     test_loader.meta = test_set.meta
@@ -187,6 +204,7 @@ def test_test_loader():
 
 if __name__ == '__main__':
     #test_test_loader()
-    test_train_loader()
+    #test_train_loader()
     #small_dict, img_ids = load_small_train_ids()
     #print(img_ids[:10])
+    print(get_tta_transforms(3))
