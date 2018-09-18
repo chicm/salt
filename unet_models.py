@@ -506,143 +506,132 @@ class DecoderV3(nn.Module):
 
         return x
 
-class UNetResNet2(nn.Module):
-    """PyTorch U-Net model using ResNet(34, 101 or 152) encoder.
+class DecoderAtt(nn.Module):
+    def __init__(self, in_channels, middle_channels, out_channels):
+        super(DecoderAtt, self).__init__()
+        self.conv1 = ConvBn2d(in_channels, middle_channels)
+        self.deconv = nn.ConvTranspose2d(middle_channels, out_channels, kernel_size=4, stride=2, padding=1)
+        self.bn = nn.BatchNorm2d(out_channels)
+        self.spatial_gate = SpatialAttentionGate(out_channels)
+        self.channel_gate = ChannelAttentionGate(out_channels)
 
-    UNet: https://arxiv.org/abs/1505.04597
-    ResNet: https://arxiv.org/abs/1512.03385
-    Proposed by Alexander Buslaev: https://www.linkedin.com/in/al-buslaev/
+    def forward(self, x):
+        x = F.relu(self.conv1(x), inplace=True)
+        x = self.deconv(x)
+        x = self.bn(x)
+        x = F.relu(x, inplace=True)
 
-    Args:
-            encoder_depth (int): Depth of a ResNet encoder (34, 101 or 152).
-            num_classes (int): Number of output classes.
-            num_filters (int, optional): Number of filters in the last layer of decoder. Defaults to 32.
-            dropout_2d (float, optional): Probability factor of dropout layer before output layer. Defaults to 0.2.
-            pretrained (bool, optional):
-                False - no pre-trained weights are being used.
-                True  - ResNet encoder is pre-trained on ImageNet.
-                Defaults to False.
-            is_deconv (bool, optional):
-                False: bilinear interpolation is used in decoder.
-                True: deconvolution is used in decoder.
-                Defaults to False.
+        g1 = self.spatial_gate(x)
+        g2 = self.channel_gate(x)
+        x = x*g1 + x*g2
 
-    """
+        return x
 
-    def __init__(self, encoder_depth, num_classes=1, num_filters=32, dropout_2d=0.3,
+class EncoderAttention(nn.Module):
+    def __init__(self, channels):
+        super(EncoderAttention, self).__init__()
+        self.spatial_gate = SpatialAttentionGate(channels)
+        self.channel_gate = ChannelAttentionGate(channels)
+
+    def forward(self, x):
+        g1 = self.spatial_gate(x)
+        g2 = self.channel_gate(x)
+        x = x*g1 + x*g2
+
+        return x
+
+
+class UNetResNetAtt(nn.Module):
+    '''
+    only + decoder attention on UNetResNet
+    '''
+    def __init__(self, encoder_depth, num_classes=1, num_filters=32, dropout_2d=0.2,
                  pretrained=True, is_deconv=True):
-        super().__init__()
+        super(UNetResNetAtt, self).__init__()
         #pdb.set_trace()
-        self.name = 'UNetResNetV2_'+str(encoder_depth)
+        self.name = 'UNetResNetAtt_'+str(encoder_depth)
         self.num_classes = num_classes
         self.dropout_2d = dropout_2d
 
         if encoder_depth == 34:
-            self.encoder = resnet34(pretrained=pretrained)
+            self.encoder = torchvision.models.resnet34(pretrained=pretrained)
             bottom_channel_nr = 512
         elif encoder_depth == 50:
-            self.encoder = resnet50(pretrained=pretrained)
+            self.encoder = torchvision.models.resnet50(pretrained=pretrained)
             bottom_channel_nr = 2048
         elif encoder_depth == 101:
-            self.encoder = resnet101(pretrained=pretrained)
+            self.encoder = torchvision.models.resnet101(pretrained=pretrained)
             bottom_channel_nr = 2048
         elif encoder_depth == 152:
-            self.encoder = resnet152(pretrained=pretrained)
+            self.encoder = torchvision.models.resnet152(pretrained=pretrained)
             bottom_channel_nr = 2048
         else:
             raise NotImplementedError('only 34, 101, 152 version of Resnet are implemented')
 
         self.pool = nn.MaxPool2d(2, 2)
-        self.enc1 = nn.Sequential(self.encoder.conv1, self.encoder.bn1, self.encoder.relu)#self.pool)
-        self.enc2 = self.encoder.layer1
-        self.enc3 = self.encoder.layer2
-        self.enc4 = self.encoder.layer3
-        self.enc5 = self.encoder.layer4
 
-        #self.center = DecoderV3(bottom_channel_nr, num_filters * 8 * 2, num_filters * 8, is_deconv)
-        self.center = nn.Sequential(
-            ConvBn2d(bottom_channel_nr, bottom_channel_nr, kernel_size=(3,3), padding=1),
-            nn.ReLU(inplace=True),
-            ConvBn2d(bottom_channel_nr, num_filters*8),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=2, stride=2)
-        )
+        self.relu = nn.ReLU(inplace=True)
 
-        self.dec5 = DecoderV3(bottom_channel_nr + num_filters * 8, num_filters * 8 * 2, num_filters * 8, is_deconv)
-        self.dec4 = DecoderV3(bottom_channel_nr // 2 + num_filters * 8, num_filters * 8 * 2, num_filters * 8,
-                                   is_deconv)
-        self.dec3 = DecoderV3(bottom_channel_nr // 4 + num_filters * 8, num_filters * 4 * 2, num_filters * 2,
-                                   is_deconv)
-        self.dec2 = DecoderV3(bottom_channel_nr // 8 + num_filters * 2, num_filters * 2 * 2, num_filters * 2 * 2,
-                                   is_deconv)
-        self.dec1 = DecoderV3(num_filters * 2 * 2, num_filters * 2 * 2, num_filters, is_deconv)
-        #self.dec0 = ConvBn2d(num_filters, num_filters)
+        self.conv1 = nn.Sequential(self.encoder.conv1,
+                                   self.encoder.bn1,
+                                   self.encoder.relu)
+                                   #self.pool)
 
-        #self.final = nn.Conv2d(num_filters, num_classes, kernel_size=1)
+        self.conv2 = self.encoder.layer1
 
-        self.logit = nn.Sequential(
-            nn.Conv2d(736, 64, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(64, 1, kernel_size=1, padding=0)
-        )
+        self.conv3 = self.encoder.layer2
 
-        self.classifier = nn.Linear(128 * 128, 1)
+        self.conv4 = self.encoder.layer3
+
+        self.conv5 = self.encoder.layer4
+
+        self.center = DecoderAtt(bottom_channel_nr, num_filters * 8 * 2, num_filters * 8)
+        self.dec5 = DecoderAtt(bottom_channel_nr + num_filters * 8, num_filters * 8 * 2, num_filters * 8)
+        self.dec4 = DecoderAtt(bottom_channel_nr // 2 + num_filters * 8, num_filters * 8 * 2, num_filters * 8)
+        self.dec3 = DecoderAtt(bottom_channel_nr // 4 + num_filters * 8, num_filters * 4 * 2, num_filters * 2)
+        self.dec2 = DecoderAtt(bottom_channel_nr // 8 + num_filters * 2, num_filters * 2 * 2, num_filters * 2 * 2)
+        self.dec1 = DecoderAtt(num_filters * 2 * 2, num_filters * 2 * 2, num_filters)
+        self.dec0 = ConvRelu(num_filters, num_filters)
+        self.final = nn.Conv2d(num_filters, num_classes, kernel_size=1)
+        #self.classifier = nn.Linear(num_filters * 256 * 256, 1)
 
     def forward(self, x):
-        x = self.enc1(x)
-        e2 = self.enc2(x)
-        e3 = self.enc3(e2)
-        e4 = self.enc4(e3)
-        e5 = self.enc5(e4) #; print(e5.size())
+        conv1 = self.conv1(x)
+        conv2 = self.conv2(conv1)
+        conv3 = self.conv3(conv2)
+        conv4 = self.conv4(conv3)
+        conv5 = self.conv5(conv4)
 
-        #pool = self.pool(e5); remove
-        center = self.center(e5) #; print(center.size())
+        pool = self.pool(conv5)
+        center = self.center(pool)
 
-        d5 = self.dec5(center, e5)
+        dec5 = self.dec5(torch.cat([center, conv5], 1))
 
-        d4 = self.dec4(d5, e4)
-        d3 = self.dec3(d4, e3)
-        d2 = self.dec2(d3, e2)
-        d1 = self.dec1(d2)
-        #d0 = self.dec0(d1)
-        #d0 = F.relu(d0, inplace=True)
+        dec4 = self.dec4(torch.cat([dec5, conv4], 1))
+        dec3 = self.dec3(torch.cat([dec4, conv3], 1))
+        dec2 = self.dec2(torch.cat([dec3, conv2], 1))
+        dec1 = self.dec1(dec2)
+        dec0 = self.dec0(dec1)
+        out = self.pool(dec0)
 
-        # Hyper column
-        f = torch.cat([
-            d1,
-            F.upsample(d2, scale_factor=2, mode='bilinear', align_corners=False),
-            F.upsample(d3, scale_factor=4, mode='bilinear', align_corners=False),
-            F.upsample(d4, scale_factor=8, mode='bilinear', align_corners=False),
-            F.upsample(d5, scale_factor=16, mode='bilinear', align_corners=False),
-        ], 1) 
-
-        f = F.dropout2d(f, p=self.dropout_2d)
-        #print(f.size())
-        #print('f:', f.size())
-        logit = self.logit(f)
-
-        #out = self.pool(d0)
-        #out = F.dropout2d(d0, p=self.dropout_2d)
-        #print(out.size())
-        cls_out = self.classifier(F.dropout(logit.view(logit.size(0), -1), p=0.25))
-
-        return logit, cls_out
+        return self.final(F.dropout2d(out, p=self.dropout_2d)), None
     
     def freeze_bn(self):
         '''Freeze BatchNorm layers.'''
         for layer in self.modules():
             if isinstance(layer, nn.BatchNorm2d):
                 layer.eval()
+
     def get_params(self, base_lr):
-        group1 = [self.enc1, self.enc2, self.enc3, self.enc4, self.enc5]
-        group2 = [self.dec1, self.dec2, self.dec3, self.dec4, self.dec5, self.center]
-        group3 = [self.classifier, self.logit]
+        group1 = [self.conv1, self.conv2, self.conv3, self.conv4, self.conv5]
+        group2 = [self.dec0, self.dec1, self.dec2, self.dec3, self.dec4, self.dec5, self.center]
+        group3 = [self.final]
 
         params1 = []
         for x in group1:
             for p in x.parameters():
                 params1.append(p)
-            
+        
         param_group1 = {'params': params1, 'lr': base_lr / 100}
 
         params2 = []
@@ -659,20 +648,6 @@ class UNetResNet2(nn.Module):
 
         return [param_group1, param_group2, param_group3]
 
-
-
-class EncoderAttention(nn.Module):
-    def __init__(self, channels):
-        super(EncoderAttention, self).__init__()
-        self.spatial_gate = SpatialAttentionGate(channels)
-        self.channel_gate = ChannelAttentionGate(channels)
-
-    def forward(self, x):
-        g1 = self.spatial_gate(x)
-        g2 = self.channel_gate(x)
-        x = x*g1 + x*g2
-
-        return x
 
 class UNetResNetV3(nn.Module):
     def __init__(self, encoder_depth, num_classes=1, num_filters=32, dropout_2d=0.2,
@@ -946,7 +921,7 @@ class UNetResNetV4(nn.Module):
         return [param_group1, param_group2, param_group3, param_group4]
 
 def test():
-    model = UNetResNetV3(152).cuda()
+    model = UNetResNetAtt(34).cuda()
     model.freeze_bn()
     inputs = torch.randn(2,3,128,128).cuda()
     out, _ = model(inputs)

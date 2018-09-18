@@ -58,10 +58,11 @@ def ensemble(checkpoints):
         with torch.no_grad():
             for i, img in enumerate(test_loader):
                 img = img.cuda()
-                output = torch.sigmoid(model(img))
+                output, _ = model(img)
+                output = torch.sigmoid(output)
 
-                for o in output.cpu().numpy():
-                    outputs.append(o)
+                for o in output.cpu():
+                    outputs.append(o.squeeze().numpy())
                 print(f'{batch_size*(i+1)} / {test_loader.num}', end='\r')
         preds.append(np.array(outputs).astype(np.float16))
         #print(preds[0].dtype)
