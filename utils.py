@@ -74,7 +74,8 @@ def encode_rle(predictions):
 def read_masks(masks_filepaths):
     masks = []
     for mask_filepath in masks_filepaths:
-        mask = Image.open(mask_filepath)
+        base_filename = mask_filepath.split('\\')[-1]
+        mask = Image.open(os.path.join(settings.TRAIN_MASK_DIR, base_filename))
         mask = np.asarray(mask.convert('L').point(lambda x: 0 if x < 128 else 1)).astype(np.uint8)
         masks.append(mask)
     return masks
@@ -121,9 +122,17 @@ def run_length_decoding(mask_rle, shape):
         img[lo:hi] = 1
     return img.reshape((shape[1], shape[0])).T
 
+def get_salt_existence():
+    train_mask = pd.read_csv(settings.LABEL_FILE)
+    salt_exists_dict = {}
+    for row in train_mask.values:
+        #print(row[1] is np.nan)
+        salt_exists_dict[row[0]] = 0 if (row[1] is np.nan or len(row[1]) < 1) else 1
+    return salt_exists_dict
 
 def generate_metadata(train_images_dir, test_images_dir, depths_filepath):
     depths = pd.read_csv(depths_filepath)
+    salt_exists_dict = get_salt_existence()
 
     metadata = {}
     for filename in tqdm(os.listdir(os.path.join(train_images_dir, 'images'))):
@@ -137,6 +146,7 @@ def generate_metadata(train_images_dir, test_images_dir, depths_filepath):
         metadata.setdefault('is_train', []).append(1)
         metadata.setdefault('id', []).append(image_id)
         metadata.setdefault('z', []).append(depth)
+        metadata.setdefault('salt_exists', []).append(salt_exists_dict[image_id])
 
     for filename in tqdm(os.listdir(os.path.join(test_images_dir, 'images'))):
         image_filepath = os.path.join(test_images_dir, 'images', filename)
@@ -148,6 +158,7 @@ def generate_metadata(train_images_dir, test_images_dir, depths_filepath):
         metadata.setdefault('is_train', []).append(0)
         metadata.setdefault('id', []).append(image_id)
         metadata.setdefault('z', []).append(depth)
+        metadata.setdefault('salt_exists', []).append(0)
 
     return pd.DataFrame(metadata)
 

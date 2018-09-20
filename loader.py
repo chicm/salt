@@ -24,6 +24,7 @@ class ImageDataset(data.Dataset):
     
         self.img_ids = meta[ID_COLUMN].values
         self.img_filenames = meta[X_COLUMN].values
+        self.salt_exists = meta['salt_exists'].values
         
         if self.train_mode:
             self.mask_filenames = meta[Y_COLUMN].values
@@ -34,35 +35,40 @@ class ImageDataset(data.Dataset):
         ])
 
     def __getitem__(self, index):
-        img_fn = self.img_filenames[index]
+        base_img_fn = self.img_filenames[index].split('\\')[-1]
+        if self.train_mode:
+            img_fn = os.path.join(TRAIN_IMG_DIR, base_img_fn)
+        else:
+            img_fn = os.path.join(TEST_IMG_DIR, base_img_fn)
         img = self.load_image(img_fn)
 
         if self.train_mode:
-            mask_fn = self.mask_filenames[index]
+            base_mask_fn = self.mask_filenames[index].split('\\')[-1]
+            mask_fn = os.path.join(TRAIN_MASK_DIR, base_mask_fn)
             mask = self.load_image(mask_fn, True)
             img, mask = self.aug_image(img, mask)
-            return img, mask
+            return img, mask, self.salt_exists[index]
         else:
             img = self.aug_image(img)
             return [img]
 
     def aug_image(self, img, mask=None):
         if mask is not None:
-            Mi = from_pil(mask)
-            Mi = [to_pil(Mi == class_nr) for class_nr in [0, 1]]
-            
-            Xi, *Mi = from_pil(img, *Mi)
-            Xi, *Mi = self.augment_with_target(Xi, *Mi)
-            Xi = self.image_augment(Xi)
-            Xi, *Mi = to_pil(Xi, *Mi)
+            Xi, Mi = from_pil(img, mask)
+            #print('>>>', Xi.shape, Mi.shape)
+            #print(Mi)
+            Xi, Mi = self.augment_with_target(Xi, Mi)
+            if self.image_augment is not None:
+                Xi = self.image_augment(Xi)
+            Xi, Mi = to_pil(Xi, Mi)
 
             if self.mask_transform is not None:
-                Mi = [self.mask_transform(m) for m in Mi]
+                Mi = self.mask_transform(Mi)
 
             if self.image_transform is not None:
                 Xi = self.image_transform(Xi)
 
-            return Xi, torch.cat(Mi, dim=0)
+            return Xi, Mi#torch.cat(Mi, dim=0)
         else:
             Xi = from_pil(img)
             Xi = self.image_augment(Xi)
@@ -77,7 +83,11 @@ class ImageDataset(data.Dataset):
         if not grayscale:
             image = image.convert('RGB')
         else:
-            image = image.convert('L').point(lambda x: 0 if x < 128 else 255, '1')
+            image = image.convert('L').point(lambda x: 0 if x < 128 else 1, 'L')
+            #image = np.asarray(image) #.convert('L')
+            #print(np.max(image))
+            #print(image)
+            #pass
         return image
 
     def __len__(self):
@@ -91,7 +101,9 @@ class ImageDataset(data.Dataset):
         if self.train_mode:
             masks = [x[1] for x in batch]
             labels = torch.stack(masks)
-            return inputs, labels
+
+            salt_target = [x[2] for x in batch]
+            return inputs, labels, torch.FloatTensor(salt_target)
         else:
             return inputs
 
@@ -107,36 +119,49 @@ def to_tensor(x):
     x_ = torch.from_numpy(x_)
     return x_
 
-image_transform = transforms.Compose([transforms.Grayscale(num_output_channels=3),
-                                          transforms.ToTensor(),
-                                          transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                                               std=[0.229, 0.224, 0.225]),
-                                    ])
+img_transforms = [
+    transforms.Grayscale(num_output_channels=3),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ]
+
+def get_tta_transforms(index):
+    tta_transforms = {
+        0: [],
+        1: [transforms.RandomHorizontalFlip(p=2.)],
+        2: [transforms.RandomVerticalFlip(p=2.)],
+        3: [transforms.RandomHorizontalFlip(p=2.), transforms.RandomVerticalFlip(p=2.)]
+    }
+    return transforms.Compose([*(tta_transforms[index]), *img_transforms])
+
+image_transform = transforms.Compose(img_transforms)
 mask_transform = transforms.Compose([transforms.Lambda(to_array),
                                          transforms.Lambda(to_tensor),
                                     ])
 #import pdb
 def get_train_loaders(ifold, batch_size=8, dev_mode=False):
     #pdb.set_trace()
+    train_shuffle = True
     train_meta, val_meta = get_nfold_split(ifold, nfold=10)
     if dev_mode:
+        train_shuffle = False
         train_meta = train_meta.iloc[:10]
         val_meta = val_meta.iloc[:10]
     print(train_meta[X_COLUMN].values[:5])
     print(train_meta[Y_COLUMN].values[:5])
 
     train_set = ImageDataset(True, train_meta,
-                            augment_with_target=ImgAug(aug.crop_seq(crop_size=(H, W), pad_size=(32,32), pad_method='reflect')),
-                            image_augment=ImgAug(aug.intensity_seq),
+                            augment_with_target=ImgAug(aug.crop_seq(crop_size=(H, W), pad_size=(28,28), pad_method='reflect')),
+                            image_augment=ImgAug(aug.brightness_seq),
                             image_transform=image_transform,
                             mask_transform=mask_transform)
 
-    train_loader = data.DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=4, collate_fn=train_set.collate_fn, drop_last=True)
+    train_loader = data.DataLoader(train_set, batch_size=batch_size, shuffle=train_shuffle, num_workers=4, collate_fn=train_set.collate_fn, drop_last=True)
     train_loader.num = len(train_set)
 
     val_set = ImageDataset(True, val_meta,
                             augment_with_target=ImgAug(aug.pad_to_fit_net(64, 'reflect')),
-                            image_augment=ImgAug(aug.pad_to_fit_net(64, 'reflect')),
+                            image_augment=None, #ImgAug(aug.pad_to_fit_net(64, 'reflect')),
                             image_transform=image_transform,
                             mask_transform=mask_transform)
     val_loader = data.DataLoader(val_set, batch_size=batch_size, shuffle=False, num_workers=4, collate_fn=val_set.collate_fn)
@@ -145,10 +170,13 @@ def get_train_loaders(ifold, batch_size=8, dev_mode=False):
 
     return train_loader, val_loader
 
-def get_test_loader(batch_size=16):
-    test_set = ImageDataset(False, get_test_meta(),
+def get_test_loader(batch_size=16, index=0, dev_mode=False):
+    test_meta = get_test_meta()
+    if dev_mode:
+        test_meta = test_meta.iloc[:10]
+    test_set = ImageDataset(False, test_meta,
                             image_augment=ImgAug(aug.pad_to_fit_net(64, 'reflect')),
-                            image_transform=image_transform)
+                            image_transform=get_tta_transforms(index))
     test_loader = data.DataLoader(test_set, batch_size=batch_size, shuffle=False, num_workers=4, collate_fn=test_set.collate_fn, drop_last=False)
     test_loader.num = len(test_set)
     test_loader.meta = test_set.meta
@@ -159,9 +187,10 @@ def test_train_loader():
     train_loader, val_loader = get_train_loaders(0, batch_size=4, dev_mode=True)
     print(train_loader.num, val_loader.num)
     for i, data in enumerate(train_loader):
-        imgs, masks = data
+        imgs, masks, salt_exists = data
         #pdb.set_trace()
-        print(imgs.size(), masks.size())
+        print(imgs.size(), masks.size(), salt_exists.size())
+        print(salt_exists)
         #print(imgs)
         #print(masks)
 
@@ -174,7 +203,8 @@ def test_test_loader():
             break
 
 if __name__ == '__main__':
-    test_test_loader()
+    #test_test_loader()
     #test_train_loader()
     #small_dict, img_ids = load_small_train_ids()
     #print(img_ids[:10])
+    print(get_tta_transforms(3))

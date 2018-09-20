@@ -2,6 +2,7 @@ from torch import nn
 from torch.nn import functional as F
 import torch
 from torchvision import models
+from torchvision.models import resnet34, resnet101, resnet50, resnet152
 import torchvision
 import pdb
 
@@ -337,17 +338,18 @@ class UNetResNet(nn.Module):
 
     """
 
-    def __init__(self, encoder_depth, num_classes, num_filters=32, dropout_2d=0.2,
-                 pretrained=False, is_deconv=False):
+    def __init__(self, encoder_depth, num_classes=1, num_filters=32, dropout_2d=0.2,
+                 pretrained=True, is_deconv=True):
         super().__init__()
         #pdb.set_trace()
+        self.name = 'UNetResNet_'+str(encoder_depth)
         self.num_classes = num_classes
         self.dropout_2d = dropout_2d
 
         if encoder_depth == 34:
             self.encoder = torchvision.models.resnet34(pretrained=pretrained)
             bottom_channel_nr = 512
-        if encoder_depth == 50:
+        elif encoder_depth == 50:
             self.encoder = torchvision.models.resnet50(pretrained=pretrained)
             bottom_channel_nr = 2048
         elif encoder_depth == 101:
@@ -365,8 +367,8 @@ class UNetResNet(nn.Module):
 
         self.conv1 = nn.Sequential(self.encoder.conv1,
                                    self.encoder.bn1,
-                                   self.encoder.relu,
-                                   self.pool)
+                                   self.encoder.relu)
+                                   #self.pool)
 
         self.conv2 = self.encoder.layer1
 
@@ -387,6 +389,7 @@ class UNetResNet(nn.Module):
         self.dec1 = DecoderBlockV2(num_filters * 2 * 2, num_filters * 2 * 2, num_filters, is_deconv)
         self.dec0 = ConvRelu(num_filters, num_filters)
         self.final = nn.Conv2d(num_filters, num_classes, kernel_size=1)
+        self.classifier = nn.Linear(num_filters * 256 * 256, 1)
 
     def forward(self, x):
         conv1 = self.conv1(x)
@@ -405,8 +408,11 @@ class UNetResNet(nn.Module):
         dec2 = self.dec2(torch.cat([dec3, conv2], 1))
         dec1 = self.dec1(dec2)
         dec0 = self.dec0(dec1)
+        out = self.pool(dec0)
 
-        return self.final(F.dropout2d(dec0, p=self.dropout_2d))
+        cls_out = self.classifier(F.dropout(dec0.view(dec0.size(0), -1), p=0.25))
+
+        return self.final(F.dropout2d(out, p=self.dropout_2d)), cls_out
     
     def freeze_bn(self):
         '''Freeze BatchNorm layers.'''
@@ -414,13 +420,509 @@ class UNetResNet(nn.Module):
             if isinstance(layer, nn.BatchNorm2d):
                 layer.eval()
 
+    def get_params(self, base_lr):
+        group1 = [self.conv1, self.conv2, self.conv3, self.conv4, self.conv5]
+        group2 = [self.dec0, self.dec1, self.dec2, self.dec3, self.dec4, self.dec5, self.center]
+        group3 = [self.classifier, self.final]
+
+        params1 = []
+        for x in group1:
+            for p in x.parameters():
+                params1.append(p)
+        
+        param_group1 = {'params': params1, 'lr': base_lr / 100}
+
+        params2 = []
+        for x in group2:
+            for p in x.parameters():
+                params2.append(p)
+        param_group2 = {'params': params2, 'lr': base_lr / 10}
+
+        params3 = []
+        for x in group3:
+            for p in x.parameters():
+                params3.append(p)
+        param_group3 = {'params': params3, 'lr': base_lr}
+
+        return [param_group1, param_group2, param_group3]
+
+class ConvBn2d(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=(3,3), stride=(1,1), padding=(1,1)):
+        super(ConvBn2d, self).__init__()
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding, bias=False)
+        self.bn = nn.BatchNorm2d(out_channels)
+    def forward(self, x):
+        x = self.conv(x)
+        x = self.bn(x)
+        return x
+
+class ChannelAttentionGate(nn.Module):
+    def __init__(self, channel, reduction=16):
+        super(ChannelAttentionGate, self).__init__()
+        self.fc1 = nn.Conv2d(channel, reduction, kernel_size=1, padding=0)
+        self.fc2 = nn.Conv2d(reduction, channel, kernel_size=1, padding=0)
+
+    def forward(self, x):
+        x = F.adaptive_avg_pool2d(x,1)
+        x = self.fc1(x)
+        x = F.relu(x, inplace=True)
+        x = self.fc2(x)
+        x = F.sigmoid(x)
+        return x
+
+class SpatialAttentionGate(nn.Module):
+    def __init__(self, channel, reduction=16):
+        super(SpatialAttentionGate, self).__init__()
+        self.fc1 = nn.Conv2d(channel, reduction, kernel_size=1, padding=0)
+        self.fc2 = nn.Conv2d(reduction, 1, kernel_size=1, padding=0)
+
+    def forward(self, x):
+        x = self.fc1(x)
+        x = F.relu(x, inplace=True)
+        x = self.fc2(x)
+        x = F.sigmoid(x)
+        #print(x.size())
+        return x
+
+class DecoderV3(nn.Module):
+    def __init__(self, in_channels, middle_channels, out_channels, is_deconv=True):
+        super(DecoderV3, self).__init__()
+        self.conv1 = ConvBn2d(in_channels, middle_channels)
+        self.conv2 = ConvBn2d(middle_channels, out_channels)
+        self.spatial_gate = SpatialAttentionGate(out_channels)
+        self.channel_gate = ChannelAttentionGate(out_channels)
+
+    def forward(self, x, e=None):
+        x = F.upsample(x, scale_factor=2, mode='bilinear', align_corners=True)
+        if e is not None:
+            x = torch.cat([x,e], 1)
+
+        x = F.relu(self.conv1(x), inplace=True)
+        x = F.relu(self.conv2(x), inplace=True)
+
+        g1 = self.spatial_gate(x)
+        g2 = self.channel_gate(x)
+        x = x*g1 + x*g2
+
+        return x
+
+class DecoderAtt(nn.Module):
+    def __init__(self, in_channels, middle_channels, out_channels):
+        super(DecoderAtt, self).__init__()
+        self.conv1 = ConvBn2d(in_channels, middle_channels)
+        self.deconv = nn.ConvTranspose2d(middle_channels, out_channels, kernel_size=4, stride=2, padding=1)
+        self.bn = nn.BatchNorm2d(out_channels)
+        self.spatial_gate = SpatialAttentionGate(out_channels)
+        self.channel_gate = ChannelAttentionGate(out_channels)
+
+    def forward(self, x):
+        x = F.relu(self.conv1(x), inplace=True)
+        x = self.deconv(x)
+        x = self.bn(x)
+        x = F.relu(x, inplace=True)
+
+        g1 = self.spatial_gate(x)
+        g2 = self.channel_gate(x)
+        x = x*g1 + x*g2
+
+        return x
+
+class EncoderAttention(nn.Module):
+    def __init__(self, channels):
+        super(EncoderAttention, self).__init__()
+        self.spatial_gate = SpatialAttentionGate(channels)
+        self.channel_gate = ChannelAttentionGate(channels)
+
+    def forward(self, x):
+        g1 = self.spatial_gate(x)
+        g2 = self.channel_gate(x)
+        x = x*g1 + x*g2
+
+        return x
+
+
+class UNetResNetAtt(nn.Module):
+    '''
+    only + decoder attention on UNetResNet
+    '''
+    def __init__(self, encoder_depth, num_classes=1, num_filters=32, dropout_2d=0.2,
+                 pretrained=True, is_deconv=True):
+        super(UNetResNetAtt, self).__init__()
+        #pdb.set_trace()
+        self.name = 'UNetResNetAtt_'+str(encoder_depth)
+        self.num_classes = num_classes
+        self.dropout_2d = dropout_2d
+
+        if encoder_depth == 34:
+            self.encoder = torchvision.models.resnet34(pretrained=pretrained)
+            bottom_channel_nr = 512
+        elif encoder_depth == 50:
+            self.encoder = torchvision.models.resnet50(pretrained=pretrained)
+            bottom_channel_nr = 2048
+        elif encoder_depth == 101:
+            self.encoder = torchvision.models.resnet101(pretrained=pretrained)
+            bottom_channel_nr = 2048
+        elif encoder_depth == 152:
+            self.encoder = torchvision.models.resnet152(pretrained=pretrained)
+            bottom_channel_nr = 2048
+        else:
+            raise NotImplementedError('only 34, 101, 152 version of Resnet are implemented')
+
+        self.pool = nn.MaxPool2d(2, 2)
+
+        self.relu = nn.ReLU(inplace=True)
+
+        self.conv1 = nn.Sequential(self.encoder.conv1,
+                                   self.encoder.bn1,
+                                   self.encoder.relu)
+                                   #self.pool)
+
+        self.conv2 = self.encoder.layer1
+
+        self.conv3 = self.encoder.layer2
+
+        self.conv4 = self.encoder.layer3
+
+        self.conv5 = self.encoder.layer4
+
+        self.center = DecoderAtt(bottom_channel_nr, num_filters * 8 * 2, num_filters * 8)
+        self.dec5 = DecoderAtt(bottom_channel_nr + num_filters * 8, num_filters * 8 * 2, num_filters * 8)
+        self.dec4 = DecoderAtt(bottom_channel_nr // 2 + num_filters * 8, num_filters * 8 * 2, num_filters * 8)
+        self.dec3 = DecoderAtt(bottom_channel_nr // 4 + num_filters * 8, num_filters * 4 * 2, num_filters * 2)
+        self.dec2 = DecoderAtt(bottom_channel_nr // 8 + num_filters * 2, num_filters * 2 * 2, num_filters * 2 * 2)
+        self.dec1 = DecoderAtt(num_filters * 2 * 2, num_filters * 2 * 2, num_filters)
+        self.dec0 = ConvRelu(num_filters, num_filters)
+        self.final = nn.Conv2d(num_filters, num_classes, kernel_size=1)
+        #self.classifier = nn.Linear(num_filters * 256 * 256, 1)
+
+    def forward(self, x):
+        conv1 = self.conv1(x)
+        conv2 = self.conv2(conv1)
+        conv3 = self.conv3(conv2)
+        conv4 = self.conv4(conv3)
+        conv5 = self.conv5(conv4)
+
+        pool = self.pool(conv5)
+        center = self.center(pool)
+
+        dec5 = self.dec5(torch.cat([center, conv5], 1))
+
+        dec4 = self.dec4(torch.cat([dec5, conv4], 1))
+        dec3 = self.dec3(torch.cat([dec4, conv3], 1))
+        dec2 = self.dec2(torch.cat([dec3, conv2], 1))
+        dec1 = self.dec1(dec2)
+        dec0 = self.dec0(dec1)
+        out = self.pool(dec0)
+
+        return self.final(F.dropout2d(out, p=self.dropout_2d)), None
+    
+    def freeze_bn(self):
+        '''Freeze BatchNorm layers.'''
+        for layer in self.modules():
+            if isinstance(layer, nn.BatchNorm2d):
+                layer.eval()
+
+    def get_params(self, base_lr):
+        group1 = [self.conv1, self.conv2, self.conv3, self.conv4, self.conv5]
+        group2 = [self.dec0, self.dec1, self.dec2, self.dec3, self.dec4, self.dec5, self.center]
+        group3 = [self.final]
+
+        params1 = []
+        for x in group1:
+            for p in x.parameters():
+                params1.append(p)
+        
+        param_group1 = {'params': params1, 'lr': base_lr / 100}
+
+        params2 = []
+        for x in group2:
+            for p in x.parameters():
+                params2.append(p)
+        param_group2 = {'params': params2, 'lr': base_lr / 10}
+
+        params3 = []
+        for x in group3:
+            for p in x.parameters():
+                params3.append(p)
+        param_group3 = {'params': params3, 'lr': base_lr}
+
+        return [param_group1, param_group2, param_group3]
+
+
+class UNetResNetV3(nn.Module):
+    def __init__(self, encoder_depth, num_classes=1, num_filters=32, dropout_2d=0.2,
+                 pretrained=True, is_deconv=True):
+        super(UNetResNetV3, self).__init__()
+        #pdb.set_trace()
+        self.name = 'UNetResNetV3_'+str(encoder_depth)
+        self.num_classes = num_classes
+        self.dropout_2d = dropout_2d
+
+        if encoder_depth == 34:
+            self.encoder = torchvision.models.resnet34(pretrained=pretrained)
+            bottom_channel_nr = 512
+        elif encoder_depth == 50:
+            self.encoder = torchvision.models.resnet50(pretrained=pretrained)
+            bottom_channel_nr = 2048
+        elif encoder_depth == 101:
+            self.encoder = torchvision.models.resnet101(pretrained=pretrained)
+            bottom_channel_nr = 2048
+        elif encoder_depth == 152:
+            self.encoder = torchvision.models.resnet152(pretrained=pretrained)
+            bottom_channel_nr = 2048
+        else:
+            raise NotImplementedError('only 34, 101, 152 version of Resnet are implemented')
+
+        self.pool = nn.MaxPool2d(2, 2)
+
+        self.relu = nn.ReLU(inplace=True)
+
+        self.conv1 = nn.Sequential(self.encoder.conv1,
+                                   self.encoder.bn1,
+                                   self.encoder.relu,
+                                   self.pool)
+        self.conv2 = self.encoder.layer1
+
+        self.conv3 = self.encoder.layer2
+
+        self.conv4 = self.encoder.layer3
+
+        self.conv5 = self.encoder.layer4
+
+        self.center = DecoderAtt(bottom_channel_nr, num_filters * 8 * 2, num_filters * 8)
+        self.dec5 = DecoderAtt(bottom_channel_nr + num_filters * 8, num_filters * 8 * 2, num_filters * 8)
+        self.dec4 = DecoderAtt(bottom_channel_nr // 2 + num_filters * 8, num_filters * 8 * 2, num_filters * 8)
+        self.dec3 = DecoderAtt(bottom_channel_nr // 4 + num_filters * 8, num_filters * 4 * 2, num_filters * 2)
+        self.dec2 = DecoderAtt(bottom_channel_nr // 8 + num_filters * 2, num_filters * 2 * 2, num_filters * 2 * 2)
+        self.dec1 = DecoderAtt(num_filters * 2 * 2, num_filters * 2 * 2, num_filters)
+        #self.dec0 = ConvRelu(num_filters, num_filters)
+        #self.final = nn.Conv2d(num_filters, num_classes, kernel_size=1)
+
+        self.logit = nn.Sequential(
+            ConvBn2d(736, 64, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(64, 1, kernel_size=1, padding=0)
+        )
+        #self.logit = nn.Sequential(
+        #    nn.Conv2d(num_filters, num_filters, kernel_size=3, padding=1),
+        #    EncoderAttention(num_filters),
+        #    nn.ReLU(inplace=True),
+        #    nn.Conv2d(num_filters, 1, kernel_size=1, padding=0)
+        #)
+
+    def forward(self, x):
+        conv1 = self.conv1(x) #;print('conv1:', conv1.size())
+        conv2 = self.conv2(conv1) #;print('conv2:', conv2.size())
+        conv3 = self.conv3(conv2) #;print('conv3:', conv3.size())
+        conv4 = self.conv4(conv3) #;print('conv4:', conv4.size())
+        conv5 = self.conv5(conv4) #;print('conv5:', conv5.size())
+
+        pool = self.pool(conv5)
+        center = self.center(pool)
+
+        dec5 = self.dec5(torch.cat([center, conv5], 1))
+
+        dec4 = self.dec4(torch.cat([dec5, conv4], 1))
+        dec3 = self.dec3(torch.cat([dec4, conv3], 1))
+        dec2 = self.dec2(torch.cat([dec3, conv2], 1)) #print('dec2:', dec2.size())
+        dec1 = self.dec1(dec2) #; print('dec1:', dec1.size())
+        #dec0 = self.dec0(dec1); print('dec0:', dec0.size())
+
+        f = torch.cat([
+            dec1,
+            F.upsample(dec2, scale_factor=2, mode='bilinear', align_corners=False),
+            F.upsample(dec3, scale_factor=4, mode='bilinear', align_corners=False),
+            F.upsample(dec4, scale_factor=8, mode='bilinear', align_corners=False),
+            F.upsample(dec5, scale_factor=16, mode='bilinear', align_corners=False),
+        ], 1) 
+
+        f = F.dropout2d(f, p=self.dropout_2d)
+        #out = self.pool(dec0)
+
+        return self.logit(f), None
+    
+    def freeze_bn(self):
+        '''Freeze BatchNorm layers.'''
+        for layer in self.modules():
+            if isinstance(layer, nn.BatchNorm2d):
+                layer.eval()
+
+    def get_params(self, base_lr):
+        group1 = [self.conv1, self.conv2, self.conv3, self.conv4, self.conv5]
+        group2 = [self.dec1, self.dec2, self.dec3, self.dec4, self.dec5, self.center]
+        group3 = [self.logit]
+
+        params1 = []
+        for x in group1:
+            for p in x.parameters():
+                params1.append(p)
+        
+        param_group1 = {'params': params1, 'lr': base_lr / 10}
+
+        params2 = []
+        for x in group2:
+            for p in x.parameters():
+                params2.append(p)
+        param_group2 = {'params': params2, 'lr': base_lr / 2}
+
+        params3 = []
+        for x in group3:
+            for p in x.parameters():
+                params3.append(p)
+        param_group3 = {'params': params3, 'lr': base_lr}
+
+        return [param_group1, param_group2, param_group3]
+
+
+
+class UNetResNetV4(nn.Module):
+    def __init__(self, encoder_depth, num_classes=1, num_filters=32, dropout_2d=0.2,
+                 pretrained=True, is_deconv=True):
+        super(UNetResNetV4, self).__init__()
+        #pdb.set_trace()
+        self.name = 'UNetResNetV4_'+str(encoder_depth)
+        self.num_classes = num_classes
+        self.dropout_2d = dropout_2d
+
+        if encoder_depth == 34:
+            self.encoder = torchvision.models.resnet34(pretrained=pretrained)
+            bottom_channel_nr = 512
+        elif encoder_depth == 50:
+            self.encoder = torchvision.models.resnet50(pretrained=pretrained)
+            bottom_channel_nr = 2048
+        elif encoder_depth == 101:
+            self.encoder = torchvision.models.resnet101(pretrained=pretrained)
+            bottom_channel_nr = 2048
+        elif encoder_depth == 152:
+            self.encoder = torchvision.models.resnet152(pretrained=pretrained)
+            bottom_channel_nr = 2048
+        else:
+            raise NotImplementedError('only 34, 101, 152 version of Resnet are implemented')
+
+        self.pool = nn.MaxPool2d(2, 2)
+
+        self.relu = nn.ReLU(inplace=True)
+
+        self.conv1 = nn.Sequential(self.encoder.conv1,
+                                   self.encoder.bn1,
+                                   self.encoder.relu,
+                                   self.pool)
+        self.att1 = EncoderAttention(num_filters*2)
+        self.conv2 = self.encoder.layer1
+        self.att2 = EncoderAttention(num_filters*8)
+
+        self.conv3 = self.encoder.layer2
+        self.att3 = EncoderAttention(num_filters*16)
+
+        self.conv4 = self.encoder.layer3
+        self.att4 = EncoderAttention(num_filters*32)
+
+        self.conv5 = self.encoder.layer4
+        self.att5 = EncoderAttention(num_filters*64)
+
+        self.center = DecoderV3(bottom_channel_nr, num_filters * 8 * 2, num_filters * 8, is_deconv)
+        self.dec5 = DecoderV3(bottom_channel_nr + num_filters * 8, num_filters * 8 * 2, num_filters * 8, is_deconv)
+        self.dec4 = DecoderV3(bottom_channel_nr // 2 + num_filters * 8, num_filters * 8 * 2, num_filters * 8,
+                                   is_deconv)
+        self.dec3 = DecoderV3(bottom_channel_nr // 4 + num_filters * 8, num_filters * 4 * 2, num_filters * 2,
+                                   is_deconv)
+        self.dec2 = DecoderV3(bottom_channel_nr // 8 + num_filters * 2, num_filters * 2 * 2, num_filters * 2 * 2,
+                                   is_deconv)
+        self.dec1 = DecoderV3(num_filters * 2 * 2, num_filters * 2 * 2, num_filters, is_deconv)
+        #self.dec0 = ConvRelu(num_filters, num_filters)
+        #self.final = nn.Conv2d(num_filters, num_classes, kernel_size=1)
+
+        self.logit = nn.Sequential(
+            EncoderAttention(736),
+            nn.Conv2d(736, 64, kernel_size=3, padding=1),
+            EncoderAttention(64),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(64, 1, kernel_size=1, padding=0)
+        )
+
+    def forward(self, x):
+        conv1 = self.conv1(x) #;print('conv1:', conv1.size())
+        att1 = self.att1(conv1) #; print('att1:', att1.size())
+        conv2 = self.conv2(att1) #;print('conv2:', conv2.size())
+        att2 = self.att2(conv2) #; print('att2:', att2.size())
+        conv3 = self.conv3(att2) #;print('conv3:', conv3.size())
+        att3 = self.att3(conv3) #; print('att3:', att3.size())
+        conv4 = self.conv4(att3) #;print('conv4:', conv4.size())
+        att4 = self.att4(conv4) #; print('att4:', att4.size())
+        conv5 = self.conv5(att4) #;print('conv5:', conv5.size())
+        att5 = self.att5(conv5) #; print('att5:', att5.size())
+
+        pool = self.pool(att5)
+        center = self.center(pool)
+
+        dec5 = self.dec5(torch.cat([center, att5], 1))
+
+        dec4 = self.dec4(torch.cat([dec5, att4], 1))
+        dec3 = self.dec3(torch.cat([dec4, att3], 1))
+        dec2 = self.dec2(torch.cat([dec3, att2], 1)); #print('dec2:', dec2.size())
+        dec1 = self.dec1(dec2); #print('dec1:', dec1.size())
+        #dec0 = self.dec0(dec1); print('dec0:', dec0.size())
+
+        f = torch.cat([
+            dec1,
+            F.upsample(dec2, scale_factor=2, mode='bilinear', align_corners=False),
+            F.upsample(dec3, scale_factor=4, mode='bilinear', align_corners=False),
+            F.upsample(dec4, scale_factor=8, mode='bilinear', align_corners=False),
+            F.upsample(dec5, scale_factor=16, mode='bilinear', align_corners=False),
+        ], 1) 
+
+        f = F.dropout2d(f, p=self.dropout_2d)
+        #out = self.pool(dec0)
+
+        return self.logit(f), None
+    
+    def freeze_bn(self):
+        '''Freeze BatchNorm layers.'''
+        for layer in self.modules():
+            if isinstance(layer, nn.BatchNorm2d):
+                layer.eval()
+
+    def get_params(self, base_lr):
+        group1 = [self.conv1, self.conv2, self.conv3, self.conv4, self.conv5]
+        group2 = [self.dec1, self.dec2, self.dec3, self.dec4, self.dec5, self.center]
+        group3 = [self.att1, self.att2, self.att3, self.att4, self.att5,]
+        group4 = [self.logit]
+
+        params1 = []
+        for x in group1:
+            for p in x.parameters():
+                params1.append(p)
+        
+        param_group1 = {'params': params1, 'lr': base_lr / 100}
+
+        params2 = []
+        for x in group2:
+            for p in x.parameters():
+                params2.append(p)
+        param_group2 = {'params': params2, 'lr': base_lr / 10}
+
+        params3 = []
+        for x in group3:
+            for p in x.parameters():
+                params3.append(p)
+        param_group3 = {'params': params3, 'lr': base_lr / 20}
+
+        params4 = []
+        for x in group4:
+            for p in x.parameters():
+                params4.append(p)
+        param_group4 = {'params': params4, 'lr': base_lr}
+
+        return [param_group1, param_group2, param_group3, param_group4]
+
 def test():
-    model = UNetResNet(50, 2, pretrained=True, is_deconv=True).cuda()
+    model = UNetResNetV3(34).cuda()
     model.freeze_bn()
     inputs = torch.randn(2,3,128,128).cuda()
-    out = model(inputs)
-    print(out.size())
-    print(out)
+    out, _ = model(inputs)
+    #print(model)
+    print(out.size()) #, cls_taret.size())
+    #print(out)
 
 
 if __name__ == '__main__':
