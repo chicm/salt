@@ -151,8 +151,8 @@ def get_train_loaders(ifold, batch_size=8, dev_mode=False):
     print(train_meta[Y_COLUMN].values[:5])
 
     train_set = ImageDataset(True, train_meta,
-                            augment_with_target=ImgAug(aug.crop_seq(crop_size=(H, W), pad_size=(28,28), pad_method='reflect')),
-                            image_augment=ImgAug(aug.brightness_seq),
+                            augment_with_target=ImgAug(aug.crop_seq(crop_size=(H, W), pad_size=(32,32), pad_method='reflect')),
+                            image_augment=ImgAug(aug.intensity_seq),
                             image_transform=image_transform,
                             mask_transform=mask_transform)
 

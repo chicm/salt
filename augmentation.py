@@ -31,7 +31,7 @@ def _perspective_transform_augment_images(self, images, random_state, parents, h
 
 iaa.PerspectiveTransform._augment_images = _perspective_transform_augment_images
 
-affine_seq = iaa.Sequential([
+affine_seq_old = iaa.Sequential([
     # General
     iaa.Fliplr(0.3),
     iaa.Flipud(0.3), 
@@ -44,6 +44,21 @@ affine_seq = iaa.Sequential([
     #iaa.Sometimes(0.3, iaa.PiecewiseAffine(scale=(0.04, 0.08))),
     #iaa.Sometimes(0.3, iaa.PerspectiveTransform(scale=(0.05, 0.1))),
 ], random_order=True)
+
+affine_seq = iaa.Sequential([
+    # General
+    iaa.Fliplr(0.5),
+    iaa.Flipud(0.5), 
+    iaa.Affine(
+        #scale={"x": (0.9, 1.1), "y": (0.9, 1.1)},
+        rotate=(-15, 15),
+        translate_percent={"x": (-0.20, 0.20), "y": (-0.20, 0.20)}, mode='reflect' #symmetric
+    ),
+    # Deformations
+    iaa.Sometimes(0.3, iaa.PiecewiseAffine(scale=(0.04, 0.08))),
+    iaa.Sometimes(0.3, iaa.PerspectiveTransform(scale=(0.05, 0.1))),
+], random_order=True)
+
 
 intensity_seq = iaa.Sequential([
     iaa.Invert(0.3),
