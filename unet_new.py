@@ -53,21 +53,6 @@ class ChannelAttentionGate(nn.Module):
         y = self.fc(y).view(b, c, 1, 1)
         return y
 
-'''
-class ChannelAttentionGate(nn.Module):
-    def __init__(self, channel, reduction=16):
-        super(ChannelAttentionGate, self).__init__()
-        self.fc1 = nn.Conv2d(channel, reduction, kernel_size=1, padding=0)
-        self.fc2 = nn.Conv2d(reduction, channel, kernel_size=1, padding=0)
-
-    def forward(self, x):
-        x = F.adaptive_avg_pool2d(x,1)
-        x = self.fc1(x)
-        x = F.relu(x, inplace=True)
-        x = self.fc2(x)
-        x = F.sigmoid(x)
-        return x
-'''
 
 class SpatialAttentionGate(nn.Module):
     def __init__(self, channel, reduction=16):
