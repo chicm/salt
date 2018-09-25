@@ -20,9 +20,23 @@ from metrics import intersection_over_union, intersection_over_union_thresholds
 import nni
 
 
-epochs = 200
-batch_size = 16
+epochs = 80
 MODEL_DIR = settings.MODEL_DIR
+
+def create_model(args, params, load_weights=True):
+    model = eval(params['model_name'])(params['layers'])
+
+    model_file = os.path.join(MODEL_DIR, model.name, 'best_{}.pth'.format(args.ifold))
+    parent_dir = os.path.dirname(model_file)
+    if not os.path.exists(parent_dir):
+        os.mkdir(parent_dir)
+
+    CKP = model_file
+    if load_weights and os.path.exists(CKP):
+        print('loading {}...'.format(CKP))
+        model.load_state_dict(torch.load(CKP))
+    return model, model_file
+
 
 class CyclicExponentialLR(_LRScheduler):
     def __init__(self, optimizer, gamma, init_lr, min_lr=5e-7, restart_max_lr=1e-5, last_epoch=-1):
@@ -51,31 +65,32 @@ def weighted_loss(output, target, epoch=0):
     else:
         return lovasz_loss #, lovasz_loss.item(), bce_loss.item()
 
-def train(args, nni_params):
-    print('start training...')
-    
-    model = UNetResNetSE(152)
-    model_file = os.path.join(MODEL_DIR, model.name, 'best_{}.pth'.format(args.ifold))
-    parent_dir = os.path.dirname(model_file)
-    if not os.path.exists(parent_dir):
-        os.mkdir(parent_dir)
+def get_default_params(args):
+    return {
+        'model_name': 'UNetResNetV3',
+        'layers': 152,
+        'init_lr': args.lr,
+        'lr_scheduler': 'ExponentialLR'
+    }
 
-    CKP = model_file
-    if os.path.exists(CKP):
-        print('loading {}...'.format(CKP))
-        model.load_state_dict(torch.load(CKP))
+def train(args):
+    params = get_default_params(args)
+    received_params = nni.get_parameters()
+    params.update(received_params)
+
+    model, model_file = create_model(args, params)
     model = model.cuda()
 
-    optimizer = optim.Adam(model.get_params(args.lr), lr=args.lr/10) #, weight_decay=0.0001)
+    optimizer = optim.Adam(model.get_params(params['init_lr']), lr=params['init_lr']/10) #, weight_decay=0.0001)
     #optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=0.0001)
 
-    train_loader, val_loader = get_train_loaders(args.ifold, batch_size=batch_size, dev_mode=False)
+    train_loader, val_loader = get_train_loaders(args.ifold, batch_size=args.batch_size, dev_mode=False)
 
-    #lr_scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=5, min_lr=1e-5)
-    lr_scheduler = CosineAnnealingLR(optimizer, 6, eta_min=2e-6) 
+    lr_scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=5, min_lr=1e-5)
+    #lr_scheduler = CosineAnnealingLR(optimizer, 6, eta_min=2e-6) 
     #ExponentialLR(optimizer, 0.9, last_epoch=-1) #CosineAnnealingLR(optimizer, 15, 1e-7) 
 
-    best_iout, _, _ = validate(model, val_loader, args.start_epoch)
+    best_iout, _, _ = validate(args, model, val_loader, args.start_epoch)
     #model.classifier.train()
     model.train()
     lr_scheduler.step(best_iout)
@@ -107,11 +122,11 @@ def train(args, nni_params):
 
             train_loss += loss.item()
             print('epoch {}: {}/{} batch loss: {:.4f}, avg loss: {:.4f} lr: {}'
-                .format(epoch, batch_size*(batch_idx+1), train_loader.num, loss.item(), train_loss/(batch_idx+1), current_lr), end='\r')
+                .format(epoch, args.batch_size*(batch_idx+1), train_loader.num, loss.item(), train_loss/(batch_idx+1), current_lr), end='\r')
         print('\n')
         print('epoch {}: {:.2f} minutes'.format(epoch, (time.time() - bg) / 60))
 
-        iout, iou, val_loss = validate(model, val_loader, epoch=epoch)
+        iout, iou, val_loss = validate(args, model, val_loader, epoch=epoch)
 
         if iout > best_iout:
             best_iout = iout
@@ -122,13 +137,13 @@ def train(args, nni_params):
             .format(epoch, train_loss, val_loss, iout, best_iout, iou, current_lr))
         nni.report_intermediate_result(best_iout)
 
-    nni.report_final_result(best_iout)    
-
         model.train()
         #model.classifier.train()
         #lr_scheduler.step(iout)
-        lr_scheduler.step()
+        lr_scheduler.step(iout)
     del model, train_loader, val_loader, optimizer, lr_scheduler
+    nni.report_final_result(best_iout)    
+
         
 def get_lrs(optimizer):
     lrs = []
@@ -137,7 +152,7 @@ def get_lrs(optimizer):
     lrs = ['{:.6f}'.format(x) for x in lrs]
     return lrs
 
-def validate(model, val_loader, epoch=0, threshold=0.5):
+def validate(args, model, val_loader, epoch=0, threshold=0.5):
     model.eval()
     print('validating...')
     outputs = []
@@ -155,7 +170,7 @@ def validate(model, val_loader, epoch=0, threshold=0.5):
             for o in output.cpu():
                 outputs.append(o.squeeze().numpy())
 
-    n_batches = val_loader.num // batch_size if val_loader.num % batch_size == 0 else val_loader.num // batch_size + 1
+    n_batches = val_loader.num // args.batch_size if val_loader.num % args.batch_size == 0 else val_loader.num // batch_size + 1
 
     # y_pred, list of 400 np array, each np array's shape is 101,101
     y_pred = generate_preds_softmax(outputs, (settings.ORIG_H, settings.ORIG_W), threshold)
@@ -185,16 +200,6 @@ def find_threshold():
             bestt = t/100.
     print('best:', best, bestt)
 
-def generate_preds(outputs, target_size, threshold=0.5):
-    preds = []
-
-    for output in outputs:
-        cropped = crop_image(output, target_size=target_size)
-        pred = binarize(cropped, threshold)
-        preds.append(pred)
-
-    return preds
-
 def generate_preds_softmax(outputs, target_size, threshold=0.5):
     preds = []
 
@@ -205,24 +210,13 @@ def generate_preds_softmax(outputs, target_size, threshold=0.5):
 
     return preds
 
-def generate_default_params():
-    '''
-    Generate default hyper parameters
-    '''
-    return {
-        'model_name': 'UNetResNetV4',
-        'layers': 34
-    }
-
 if __name__ == '__main__':
-    
-    
     #pdb.set_trace()
     parser = argparse.ArgumentParser(description='Salt segmentation')
     parser.add_argument('--lr', default=0.0002, type=float, help='learning rate')
+    parser.add_argument('--batch_size', default=16, type=int, help='batch size')
     parser.add_argument('--ifold', default=0, type=int, help='kfold index')
     parser.add_argument('--start_epoch', default=0, type=int, help='start epoch')
-    parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')
     args = parser.parse_args()
 
     log.basicConfig(
@@ -231,7 +225,4 @@ if __name__ == '__main__':
         datefmt  = '%Y-%m-%d %H:%M:%S', 
         level = log.INFO)
 
-    received_params = nni.get_parameters()
-    params = generate_default_params()
-    params.update(received_params)
-    train(args, params)
+    train(args)

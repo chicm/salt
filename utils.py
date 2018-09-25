@@ -15,8 +15,6 @@ from attrdict import AttrDict
 from tqdm import tqdm
 from pycocotools import mask as cocomask
 from sklearn.model_selection import BaseCrossValidator, KFold
-#from steppy.base import BaseTransformer
-#from steppy.utils import get_logger
 import yaml
 from imgaug import augmenters as iaa
 import imgaug as ia
@@ -24,38 +22,6 @@ import torch
 
 import settings
 
-'''
-NEPTUNE_CONFIG_PATH = str(pathlib.Path(__file__).resolve().parents[1] / 'neptune.yaml')
-logger = get_logger()
-
-
-def read_yaml(fallback_file=NEPTUNE_CONFIG_PATH):
-    with open(fallback_file) as f:
-        config = yaml.load(f)
-    return AttrDict(config)
-
-
-def init_logger():
-    logger = logging.getLogger('salt-detection')
-    logger.setLevel(logging.INFO)
-    message_format = logging.Formatter(fmt='%(asctime)s %(name)s >>> %(message)s',
-                                       datefmt='%Y-%m-%d %H-%M-%S')
-
-    # console handler for validation info
-    ch_va = logging.StreamHandler(sys.stdout)
-    ch_va.setLevel(logging.INFO)
-
-    ch_va.setFormatter(fmt=message_format)
-
-    # add the handlers to the logger
-    logger.addHandler(ch_va)
-
-    return logger
-
-
-def get_logger():
-    return logging.getLogger('salt-detection')
-'''
 
 def create_submission(meta, predictions):
     output = []

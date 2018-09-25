@@ -6,23 +6,8 @@ from torchvision.models import resnet34, resnet101, resnet50, resnet152
 import torchvision
 import pdb
 
-"""
-This script has been taken (and modified) from :
-https://github.com/ternaus/TernausNet
-
-@ARTICLE{arXiv:1801.05746,
-         author = {V. Iglovikov and A. Shvets},
-          title = {TernausNet: U-Net with VGG11 Encoder Pre-Trained on ImageNet for Image Segmentation},
-        journal = {ArXiv e-prints},
-         eprint = {1801.05746}, 
-           year = 2018
-        }
-"""
-
-
 def conv3x3(in_, out):
     return nn.Conv2d(in_, out, 3, padding=1)
-
 
 class ConvRelu(nn.Module):
     def __init__(self, in_, out):

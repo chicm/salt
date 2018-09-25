@@ -55,7 +55,7 @@ def test():
     print(meta_train_split[settings.X_COLUMN].values[:10])
 
 if __name__ == '__main__':
-    #prepare_metadata()
+    prepare_metadata()
     #test()
-    convert_model2()
+    #convert_model2()
     #get_mask_existence()
