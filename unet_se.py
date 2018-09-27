@@ -188,7 +188,7 @@ class UNetResNetSE(nn.Module):
 
 
 def test():
-    model = UNetResNetSE(152).cuda()
+    model = UNetResNetSE(34).cuda()
     model.freeze_bn()
     inputs = torch.randn(2,3,128,128).cuda()
     out, _ = model(inputs)
