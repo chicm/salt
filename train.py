@@ -19,7 +19,6 @@ from dice_losses import mixed_dice_bce_loss
 from postprocessing import crop_image, binarize, crop_image_softmax
 from metrics import intersection_over_union, intersection_over_union_thresholds
 
-epochs = 200
 MODEL_DIR = settings.MODEL_DIR
 
 class CyclicExponentialLR(_LRScheduler):
@@ -79,7 +78,7 @@ def train(args):
     #lr_scheduler.step(best_iout)
     lr_scheduler.step()
 
-    for epoch in range(args.start_epoch, epochs):
+    for epoch in range(args.start_epoch, args.epochs):
         train_loss = 0
 
         #if epoch < 5:
@@ -166,16 +165,18 @@ def validate(args, model, val_loader, epoch=0, threshold=0.5):
     return iout_score, iou_score, val_loss / n_batches
 
 def find_threshold(args):
-    ckp = r'G:\salt\models\152\ensemble_822\best_3.pth'
-    model = UNetResNet(152, 2, pretrained=True, is_deconv=True)
+    #ckp = r'G:\salt\models\152\ensemble_822\best_3.pth'
+    ckp = r'D:\data\salt\models\UNetResNetV4_34\best_0.pth'
+    model = UNetResNetV4(34)
     model.load_state_dict(torch.load(ckp))
     model = model.cuda()
-    criterion = lovasz_hinge
-    _, val_loader = get_train_loaders(3, batch_size=args.batch_size, dev_mode=False)
+    #criterion = lovasz_hinge
+    _, val_loader = get_train_loaders(0, batch_size=args.batch_size, dev_mode=False)
 
     best, bestt = 0, 0.
-    for t in range(35, 55, 1):
-        iout, _, _ = validate(model, val_loader, criterion, t/100.)
+    for t in range(40, 55, 1):
+        print('threshold:', t/100.)
+        iout, _, _ = validate(args, model, val_loader, epoch=10, threshold=t/100.)
         if iout > best:
             best = iout
             bestt = t/100.
@@ -211,6 +212,7 @@ if __name__ == '__main__':
     parser.add_argument('--ifold', default=0, type=int, help='kfold index')
     parser.add_argument('--batch_size', default=32, type=int, help='batch_size')
     parser.add_argument('--start_epoch', default=0, type=int, help='start epoch')
+    parser.add_argument('--epochs', default=200, type=int, help='epoch')
     args = parser.parse_args()
 
     log.basicConfig(
@@ -219,7 +221,7 @@ if __name__ == '__main__':
         datefmt  = '%Y-%m-%d %H:%M:%S', 
         level = log.INFO)
 
-    #find_threshold()
+    #find_threshold(args)
     #for i in range(5):
     #    args.ifold=i
     #    train(args)
