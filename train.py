@@ -20,7 +20,7 @@ from postprocessing import crop_image, binarize, crop_image_softmax
 from metrics import intersection_over_union, intersection_over_union_thresholds
 
 epochs = 200
-batch_size = 48
+batch_size = 32
 MODEL_DIR = settings.MODEL_DIR
 
 class CyclicExponentialLR(_LRScheduler):
@@ -70,7 +70,7 @@ def train(args):
 
     train_loader, val_loader = get_train_loaders(args.ifold, batch_size=batch_size, dev_mode=False)
 
-    lr_scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=8, min_lr=1e-4)
+    lr_scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=6, min_lr=1e-4)
     #lr_scheduler = CosineAnnealingLR(optimizer, 6, eta_min=2e-6) 
     #ExponentialLR(optimizer, 0.9, last_epoch=-1) #CosineAnnealingLR(optimizer, 15, 1e-7) 
 
@@ -219,6 +219,7 @@ if __name__ == '__main__':
         level = log.INFO)
 
     #find_threshold()
-    for i in range(5):
-        args.ifold=i
-        train(args)
+    #for i in range(5):
+    #    args.ifold=i
+    #    train(args)
+    train(args)
