@@ -20,7 +20,6 @@ from postprocessing import crop_image, binarize, crop_image_softmax
 from metrics import intersection_over_union, intersection_over_union_thresholds
 
 epochs = 200
-batch_size = 32
 MODEL_DIR = settings.MODEL_DIR
 
 class CyclicExponentialLR(_LRScheduler):
@@ -68,16 +67,17 @@ def train(args):
     #optimizer = optim.Adam(model.get_params(args.lr), lr=args.lr/10) #, weight_decay=0.0001)
     optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=0.0001)
 
-    train_loader, val_loader = get_train_loaders(args.ifold, batch_size=batch_size, dev_mode=False)
+    train_loader, val_loader = get_train_loaders(args.ifold, batch_size=args.batch_size, dev_mode=False)
 
-    lr_scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=6, min_lr=1e-4)
-    #lr_scheduler = CosineAnnealingLR(optimizer, 6, eta_min=2e-6) 
+    #lr_scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=6, min_lr=args.min_lr)
+    lr_scheduler = CosineAnnealingLR(optimizer, 8, eta_min=args.min_lr) 
     #ExponentialLR(optimizer, 0.9, last_epoch=-1) #CosineAnnealingLR(optimizer, 15, 1e-7) 
 
-    best_iout, _, _ = validate(model, val_loader, args.start_epoch)
+    best_iout, _, _ = validate(args, model, val_loader, args.start_epoch)
     #model.classifier.train()
     model.train()
-    lr_scheduler.step(best_iout)
+    #lr_scheduler.step(best_iout)
+    lr_scheduler.step()
 
     for epoch in range(args.start_epoch, epochs):
         train_loss = 0
@@ -106,11 +106,11 @@ def train(args):
 
             train_loss += loss.item()
             print('epoch {}: {}/{} batch loss: {:.4f}, avg loss: {:.4f} lr: {}'
-                .format(epoch, batch_size*(batch_idx+1), train_loader.num, loss.item(), train_loss/(batch_idx+1), current_lr), end='\r')
+                .format(epoch, args.batch_size*(batch_idx+1), train_loader.num, loss.item(), train_loss/(batch_idx+1), current_lr), end='\r')
         print('\n')
         print('epoch {}: {:.2f} minutes'.format(epoch, (time.time() - bg) / 60))
 
-        iout, iou, val_loss = validate(model, val_loader, epoch=epoch)
+        iout, iou, val_loss = validate(args, model, val_loader, epoch=epoch)
 
         if iout > best_iout:
             best_iout = iout
@@ -123,7 +123,7 @@ def train(args):
         model.train()
         #model.classifier.train()
         #lr_scheduler.step(iout)
-        lr_scheduler.step(iout)
+        lr_scheduler.step()
     del model, train_loader, val_loader, optimizer, lr_scheduler
         
 def get_lrs(optimizer):
@@ -133,7 +133,7 @@ def get_lrs(optimizer):
     lrs = ['{:.6f}'.format(x) for x in lrs]
     return lrs
 
-def validate(model, val_loader, epoch=0, threshold=0.5):
+def validate(args, model, val_loader, epoch=0, threshold=0.5):
     model.eval()
     print('validating...')
     outputs = []
@@ -151,7 +151,7 @@ def validate(model, val_loader, epoch=0, threshold=0.5):
             for o in output.cpu():
                 outputs.append(o.squeeze().numpy())
 
-    n_batches = val_loader.num // batch_size if val_loader.num % batch_size == 0 else val_loader.num // batch_size + 1
+    n_batches = val_loader.num // args.batch_size if val_loader.num % args.batch_size == 0 else val_loader.num // args.batch_size + 1
 
     # y_pred, list of 400 np array, each np array's shape is 101,101
     y_pred = generate_preds_softmax(outputs, (settings.ORIG_H, settings.ORIG_W), threshold)
@@ -165,13 +165,13 @@ def validate(model, val_loader, epoch=0, threshold=0.5):
 
     return iout_score, iou_score, val_loss / n_batches
 
-def find_threshold():
+def find_threshold(args):
     ckp = r'G:\salt\models\152\ensemble_822\best_3.pth'
     model = UNetResNet(152, 2, pretrained=True, is_deconv=True)
     model.load_state_dict(torch.load(ckp))
     model = model.cuda()
     criterion = lovasz_hinge
-    _, val_loader = get_train_loaders(3, batch_size=batch_size, dev_mode=False)
+    _, val_loader = get_train_loaders(3, batch_size=args.batch_size, dev_mode=False)
 
     best, bestt = 0, 0.
     for t in range(35, 55, 1):
@@ -207,9 +207,10 @@ if __name__ == '__main__':
     #pdb.set_trace()
     parser = argparse.ArgumentParser(description='Salt segmentation')
     parser.add_argument('--lr', default=0.01, type=float, help='learning rate')
+    parser.add_argument('--min_lr', default=0.0002, type=float, help='min learning rate')
     parser.add_argument('--ifold', default=0, type=int, help='kfold index')
+    parser.add_argument('--batch_size', default=32, type=int, help='batch_size')
     parser.add_argument('--start_epoch', default=0, type=int, help='start epoch')
-    parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')
     args = parser.parse_args()
 
     log.basicConfig(
