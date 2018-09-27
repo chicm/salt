@@ -10,7 +10,7 @@ import torch.nn.functional as F
 from torch.optim.lr_scheduler import ExponentialLR, CosineAnnealingLR, _LRScheduler, ReduceLROnPlateau
 import pdb
 import settings
-from loader import get_train_loaders
+from loader import get_train_loaders, add_depth_channel
 from unet_models import UNetResNet, UNetResNetAtt, UNetResNetV3
 from unet_new import UNetResNetV4
 from unet_se import UNetResNetSE
@@ -52,7 +52,7 @@ def train(args):
     print('start training...')
     
     model = UNetResNetV4(34)
-    model_file = os.path.join(MODEL_DIR, model.name, 'best_{}.pth'.format(args.ifold))
+    model_file = os.path.join(MODEL_DIR, 'depths', model.name, 'best_{}.pth'.format(args.ifold))
     parent_dir = os.path.dirname(model_file)
     if not os.path.exists(parent_dir):
         os.mkdir(parent_dir)
@@ -88,6 +88,7 @@ def train(args):
         bg = time.time()
         for batch_idx, data in enumerate(train_loader):
             img, target, salt_target = data
+            add_depth_channel(img)
             img, target, salt_target = img.cuda(), target.cuda(), salt_target.cuda()
             optimizer.zero_grad()
             output, salt_out = model(img)
@@ -139,6 +140,7 @@ def validate(args, model, val_loader, epoch=0, threshold=0.5):
     val_loss = 0
     with torch.no_grad():
         for img, target, salt_target in val_loader:
+            add_depth_channel(img)
             img, target, salt_target = img.cuda(), target.cuda(), salt_target.cuda()
             output, salt_out = model(img)
             #print(output.size(), salt_out.size())

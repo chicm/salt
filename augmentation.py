@@ -33,12 +33,13 @@ iaa.PerspectiveTransform._augment_images = _perspective_transform_augment_images
 
 affine_seq = iaa.Sequential([
     # General
-    iaa.Fliplr(0.3),
-    iaa.Flipud(0.3), 
+    iaa.Fliplr(0.5),
+    #iaa.Flipud(0.5), 
     iaa.Affine(
-        scale={"x": (0.9, 1.1), "y": (0.9, 1.1)},
+        #scale={"x": (0.9, 1.1), "y": (0.9, 1.1)},
         rotate=(-10, 10),
-        translate_percent={"x": (-0.15, 0.15), "y": (-0.15, 0.15)}, mode='reflect' #symmetric
+        translate_percent={"x": (-0.1, 0.1)}, #"y": (-0.15, 0.15)}, 
+        mode='edge' #symmetric reflect
     ),
     # Deformations
     #iaa.Sometimes(0.3, iaa.PiecewiseAffine(scale=(0.04, 0.08))),
@@ -95,7 +96,7 @@ def pad_to_fit_net(divisor, pad_mode, rest_of_augs=iaa.Noop()):
 
 class PadFixed(iaa.Augmenter):
     PAD_FUNCTION = {'reflect': cv2.BORDER_REFLECT_101,
-                    'replicate': cv2.BORDER_REPLICATE,
+                    'edge': cv2.BORDER_REPLICATE,
                     }
 
     def __init__(self, pad=None, pad_method=None, name=None, deterministic=False, random_state=None):
@@ -297,7 +298,7 @@ def test_augment():
     Mi = [to_pil(mask == class_nr) for class_nr in [0, 1]]
     img, *Mi = from_pil(img, *Mi)
 
-    aug = ImgAug(crop_seq(crop_size=(settings.H, settings.W), pad_size=(32,32), pad_method='reflect'))
+    aug = ImgAug(crop_seq(crop_size=(settings.H, settings.W), pad_size=(14,14), pad_method='edge'))
     aug2 = ImgAug(brightness_seq)
     img, *Mi = aug(img, *Mi)
     img = aug2(img)
