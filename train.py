@@ -233,7 +233,7 @@ if __name__ == '__main__':
     parser.add_argument('--patience', default=6, type=int, help='lr scheduler patience')
     parser.add_argument('--factor', default=0.5, type=float, help='lr scheduler factor')
     parser.add_argument('--t_max', default=8, type=int, help='lr scheduler patience')
-    parser.add_argument('--pad_mode', default='reflect', choices=['reflect', 'edge'], help='pad method')
+    parser.add_argument('--pad_mode', default='edge', choices=['reflect', 'edge'], help='pad method')
     parser.add_argument('--exp_name', default='depths', type=str, help='exp name')
     args = parser.parse_args()
 
