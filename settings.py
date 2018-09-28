@@ -1,6 +1,6 @@
 import os
 
-DATA_DIR = r'G:\salt'
+DATA_DIR = r'D:\data\salt'
 
 TRAIN_DIR = os.path.join(DATA_DIR, 'train')
 TEST_DIR = os.path.join(DATA_DIR, 'test')

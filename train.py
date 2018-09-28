@@ -15,11 +15,12 @@ from unet_models import UNetResNet, UNetResNetAtt, UNetResNetV3
 from unet_new import UNetResNetV4
 from unet_se import UNetResNetSE
 from lovasz_losses import lovasz_hinge, lovasz_softmax
-from dice_losses import mixed_dice_bce_loss
+from dice_losses import mixed_dice_bce_loss, FocalLoss2d
 from postprocessing import crop_image, binarize, crop_image_softmax
 from metrics import intersection_over_union, intersection_over_union_thresholds
 
 MODEL_DIR = settings.MODEL_DIR
+focal_loss2d = FocalLoss2d()
 
 class CyclicExponentialLR(_LRScheduler):
     def __init__(self, optimizer, gamma, init_lr, min_lr=5e-7, restart_max_lr=1e-5, last_epoch=-1):
@@ -41,21 +42,25 @@ def weighted_loss(output, target, epoch=0):
     mask_target, _ = target
     
     lovasz_loss = lovasz_hinge(mask_output, mask_target)
-    dice_loss = mixed_dice_bce_loss(mask_output, mask_target)
-    #print(bce_loss, lovasz_loss)
-    if epoch < 5:
-        return dice_loss
+    #dice_loss = mixed_dice_bce_loss(mask_output, mask_target)
+    focal_loss = focal_loss2d(mask_output, mask_target)
+    if epoch < 10:
+        return focal_loss
     else:
         return lovasz_loss #, lovasz_loss.item(), bce_loss.item()
 
 def train(args):
     print('start training...')
-    
-    model = UNetResNetV4(34)
-    model_file = os.path.join(MODEL_DIR, model.name, 'best_{}.pth'.format(args.ifold))
+
+    model = UNetResNetV4(args.layers)
+    if args.exp_name is None:
+        model_file = os.path.join(MODEL_DIR, model.name, 'best_{}.pth'.format(args.ifold))
+    else:
+        model_file = os.path.join(MODEL_DIR, args.exp_name, model.name, 'best_{}.pth'.format(args.ifold))
+
     parent_dir = os.path.dirname(model_file)
     if not os.path.exists(parent_dir):
-        os.mkdir(parent_dir)
+        os.makedirs(parent_dir)
 
     CKP = model_file
     if os.path.exists(CKP):
@@ -63,20 +68,26 @@ def train(args):
         model.load_state_dict(torch.load(CKP))
     model = model.cuda()
 
-    #optimizer = optim.Adam(model.get_params(args.lr), lr=args.lr/10) #, weight_decay=0.0001)
-    optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=0.0001)
+    if args.optim == 'Adam':
+        optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=0.0001)
+    else:
+        optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=0.0001)
 
-    train_loader, val_loader = get_train_loaders(args.ifold, batch_size=args.batch_size, dev_mode=False)
+    train_loader, val_loader = get_train_loaders(args.ifold, batch_size=args.batch_size, dev_mode=False, pad_mode=args.pad_mode)
 
-    #lr_scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=6, min_lr=args.min_lr)
-    lr_scheduler = CosineAnnealingLR(optimizer, 8, eta_min=args.min_lr) 
+    if args.lrs == 'plateau':
+        lr_scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=args.factor, patience=args.patience, min_lr=args.min_lr)
+    else:
+        lr_scheduler = CosineAnnealingLR(optimizer, args.t_max, eta_min=args.min_lr)
     #ExponentialLR(optimizer, 0.9, last_epoch=-1) #CosineAnnealingLR(optimizer, 15, 1e-7) 
 
     best_iout, _, _ = validate(args, model, val_loader, args.start_epoch)
-    #model.classifier.train()
     model.train()
-    #lr_scheduler.step(best_iout)
-    lr_scheduler.step()
+
+    if args.lrs == 'plateau':
+        lr_scheduler.step(best_iout)
+    else:
+        lr_scheduler.step()
 
     for epoch in range(args.start_epoch, args.epochs):
         train_loss = 0
@@ -91,15 +102,15 @@ def train(args):
             img, target, salt_target = img.cuda(), target.cuda(), salt_target.cuda()
             optimizer.zero_grad()
             output, salt_out = model(img)
-            #loss = criterion(output, target)
+            
             loss = weighted_loss((output, salt_out), (target, salt_target), epoch=epoch)
             loss.backward()
  
             # adamW
-            wd = 0.0001
-            for group in optimizer.param_groups:
-                for param in group['params']:
-                    param.data = param.data.add(-wd * group['lr'], param.data)
+            #wd = 0.0001
+            #for group in optimizer.param_groups:
+            #    for param in group['params']:
+            #        param.data = param.data.add(-wd * group['lr'], param.data)
 
             optimizer.step()
 
@@ -120,9 +131,12 @@ def train(args):
             .format(epoch, train_loss, val_loss, iout, best_iout, iou, current_lr))
 
         model.train()
-        #model.classifier.train()
-        #lr_scheduler.step(iout)
-        lr_scheduler.step()
+        
+        if args.lrs == 'plateau':
+            lr_scheduler.step(best_iout)
+        else:
+            lr_scheduler.step()
+
     del model, train_loader, val_loader, optimizer, lr_scheduler
         
 def get_lrs(optimizer):
@@ -204,25 +218,32 @@ def generate_preds_softmax(outputs, target_size, threshold=0.5):
 
 if __name__ == '__main__':
     
-    
-    #pdb.set_trace()
     parser = argparse.ArgumentParser(description='Salt segmentation')
-    parser.add_argument('--lr', default=0.01, type=float, help='learning rate')
+    parser.add_argument('--layers', default=34, type=int, help='model layers')
+    parser.add_argument('--lr', default=0.002, type=float, help='learning rate')
     parser.add_argument('--min_lr', default=0.0002, type=float, help='min learning rate')
-    parser.add_argument('--ifold', default=0, type=int, help='kfold index')
+    parser.add_argument('--ifolds', default='0', type=str, help='kfold indices')
     parser.add_argument('--batch_size', default=32, type=int, help='batch_size')
     parser.add_argument('--start_epoch', default=0, type=int, help='start epoch')
     parser.add_argument('--epochs', default=200, type=int, help='epoch')
+    parser.add_argument('--optim', default='SGD', choices=['SGD', 'Adam'], help='optimizer')
+    parser.add_argument('--lrs', default='cosine', choices=['cosine', 'plateau'], help='LR sceduler')
+    parser.add_argument('--patience', default=6, type=int, help='lr scheduler patience')
+    parser.add_argument('--factor', default=0.5, type=float, help='lr scheduler factor')
+    parser.add_argument('--t_max', default=8, type=int, help='lr scheduler patience')
+    parser.add_argument('--pad_mode', default='reflect', choices=['reflect', 'edge'], help='pad method')
+    parser.add_argument('--exp_name', default=None, type=str, help='exp name')
     args = parser.parse_args()
 
+    print(args)
+    ifolds = [int(x) for x in args.ifolds.split(',')]
+    print(ifolds)
     log.basicConfig(
-        filename = 'trainlog_{}.txt'.format(args.ifold), 
+        filename = 'trainlog_{}.txt'.format(''.join([str(x) for x in ifolds])), 
         format   = '%(asctime)s : %(message)s',
         datefmt  = '%Y-%m-%d %H:%M:%S', 
         level = log.INFO)
 
-    #find_threshold(args)
-    #for i in range(5):
-    #    args.ifold=i
-    #    train(args)
-    train(args)
+    for i in ifolds:
+        args.ifold = i
+        train(args)

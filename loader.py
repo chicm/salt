@@ -139,7 +139,7 @@ mask_transform = transforms.Compose([transforms.Lambda(to_array),
                                          transforms.Lambda(to_tensor),
                                     ])
 #import pdb
-def get_train_loaders(ifold, batch_size=8, dev_mode=False):
+def get_train_loaders(ifold, batch_size=8, dev_mode=False, pad_mode='reflect'):
     #pdb.set_trace()
     train_shuffle = True
     train_meta, val_meta = get_nfold_split(ifold, nfold=10)
@@ -147,11 +147,11 @@ def get_train_loaders(ifold, batch_size=8, dev_mode=False):
         train_shuffle = False
         train_meta = train_meta.iloc[:10]
         val_meta = val_meta.iloc[:10]
-    print(train_meta[X_COLUMN].values[:5])
-    print(train_meta[Y_COLUMN].values[:5])
+    print(val_meta[X_COLUMN].values[:5])
+    #print(val_meta[Y_COLUMN].values[:5])
 
     train_set = ImageDataset(True, train_meta,
-                            augment_with_target=ImgAug(aug.crop_seq(crop_size=(H, W), pad_size=(28,28), pad_method='reflect')),
+                            augment_with_target=ImgAug(aug.crop_seq(crop_size=(H, W), pad_size=(28,28), pad_method=pad_mode)),
                             image_augment=ImgAug(aug.brightness_seq),
                             image_transform=image_transform,
                             mask_transform=mask_transform)
@@ -160,7 +160,7 @@ def get_train_loaders(ifold, batch_size=8, dev_mode=False):
     train_loader.num = len(train_set)
 
     val_set = ImageDataset(True, val_meta,
-                            augment_with_target=ImgAug(aug.pad_to_fit_net(64, 'reflect')),
+                            augment_with_target=ImgAug(aug.pad_to_fit_net(64, pad_mode)),
                             image_augment=None, #ImgAug(aug.pad_to_fit_net(64, 'reflect')),
                             image_transform=image_transform,
                             mask_transform=mask_transform)
@@ -170,12 +170,12 @@ def get_train_loaders(ifold, batch_size=8, dev_mode=False):
 
     return train_loader, val_loader
 
-def get_test_loader(batch_size=16, index=0, dev_mode=False):
+def get_test_loader(batch_size=16, index=0, dev_mode=False, pad_mode='reflect'):
     test_meta = get_test_meta()
     if dev_mode:
         test_meta = test_meta.iloc[:10]
     test_set = ImageDataset(False, test_meta,
-                            image_augment=ImgAug(aug.pad_to_fit_net(64, 'reflect')),
+                            image_augment=ImgAug(aug.pad_to_fit_net(64, pad_mode)),
                             image_transform=get_tta_transforms(index))
     test_loader = data.DataLoader(test_set, batch_size=batch_size, shuffle=False, num_workers=4, collate_fn=test_set.collate_fn, drop_last=False)
     test_loader.num = len(test_set)
