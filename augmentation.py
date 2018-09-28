@@ -31,20 +31,38 @@ def _perspective_transform_augment_images(self, images, random_state, parents, h
 
 iaa.PerspectiveTransform._augment_images = _perspective_transform_augment_images
 
-affine_seq = iaa.Sequential([
-    # General
-    iaa.Fliplr(0.5),
-    #iaa.Flipud(0.5), 
-    iaa.Affine(
-        #scale={"x": (0.9, 1.1), "y": (0.9, 1.1)},
-        rotate=(-10, 10),
-        translate_percent={"x": (-0.1, 0.1)}, #"y": (-0.15, 0.15)}, 
-        mode='edge' #symmetric reflect
-    ),
-    # Deformations
-    #iaa.Sometimes(0.3, iaa.PiecewiseAffine(scale=(0.04, 0.08))),
-    #iaa.Sometimes(0.3, iaa.PerspectiveTransform(scale=(0.05, 0.1))),
-], random_order=True)
+def get_affine_seq_depths(pad_mode='edge'):
+    affine_seq = iaa.Sequential([
+        # General
+        iaa.Fliplr(0.5),
+        #iaa.Flipud(0.5), 
+        iaa.Affine(
+            #scale={"x": (0.9, 1.1), "y": (0.9, 1.1)},
+            rotate=(-10, 10),
+            translate_percent={"x": (-0.1, 0.1)}, #"y": (-0.15, 0.15)}, 
+            mode='edge' #symmetric reflect
+        ),
+        # Deformations
+        #iaa.Sometimes(0.3, iaa.PiecewiseAffine(scale=(0.04, 0.08))),
+        #iaa.Sometimes(0.3, iaa.PerspectiveTransform(scale=(0.05, 0.1))),
+    ], random_order=True)
+    return affine_seq
+
+def get_affine_seq(pad_mode='reflect'):
+    affine_seq = iaa.Sequential([
+        # General
+        iaa.Fliplr(0.3),
+        iaa.Flipud(0.3), 
+        iaa.Affine(
+            scale={"x": (0.9, 1.1), "y": (0.9, 1.1)},
+            rotate=(-10, 10),
+            translate_percent={"x": (-0.15, 0.15), "y": (-0.15, 0.15)}, mode=pad_mode #'reflect' #symmetric
+        ),
+        # Deformations
+        #iaa.Sometimes(0.3, iaa.PiecewiseAffine(scale=(0.04, 0.08))),
+        #iaa.Sometimes(0.3, iaa.PerspectiveTransform(scale=(0.05, 0.1))),
+    ], random_order=True)
+    return affine_seq
 
 intensity_seq = iaa.Sequential([
     iaa.Invert(0.3),
@@ -77,7 +95,7 @@ brightness_seq =  iaa.Sequential([
 def crop_seq(crop_size, pad_size, pad_method):
     seq = iaa.Sequential([
             PadFixed(pad=pad_size, pad_method=pad_method),
-            affine_seq, 
+            get_affine_seq_depths(pad_method), 
             RandomCropFixedSize(px=crop_size)
         ], 
         random_order=False)

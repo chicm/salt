@@ -147,8 +147,8 @@ def get_train_loaders(ifold, batch_size=8, dev_mode=False, pad_mode='edge'): # r
         train_shuffle = False
         train_meta = train_meta.iloc[:10]
         val_meta = val_meta.iloc[:10]
-    print(train_meta[X_COLUMN].values[:5])
-    print(train_meta[Y_COLUMN].values[:5])
+    print(val_meta[X_COLUMN].values[:5])
+    #print(val_meta[Y_COLUMN].values[:5])
 
     train_set = ImageDataset(True, train_meta,
                             augment_with_target=ImgAug(aug.crop_seq(crop_size=(H, W), pad_size=(28,28), pad_method=pad_mode)),
