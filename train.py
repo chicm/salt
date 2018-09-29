@@ -12,7 +12,7 @@ import pdb
 import settings
 from loader import get_train_loaders
 from unet_models import UNetResNet, UNetResNetAtt, UNetResNetV3
-from unet_new import UNetResNetV4, UNetResNetV5
+from unet_new import UNetResNetV4, UNetResNetV5, UNetResNetV6
 from unet_se import UNetResNetSE
 from lovasz_losses import lovasz_hinge, lovasz_softmax
 from dice_losses import mixed_dice_bce_loss, FocalLoss2d

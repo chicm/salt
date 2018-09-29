@@ -350,19 +350,20 @@ class UNetResNetV5(nn.Module):
 
 class UNetResNetV6(nn.Module):
     '''
-    remove first pool from v5
+    1. Remove first pool from UNetResNetV5, such that resolution is doubled
+    2. Remove scSE from center block
+    3. Increase default dropout 
     '''
-    def __init__(self, encoder_depth, num_classes=1, num_filters=32, dropout_2d=0.5):
+    def __init__(self, encoder_depth, num_filters=32, dropout_2d=0.5):
         super(UNetResNetV6, self).__init__()
+        assert encoder_depth == 34, 'UNetResNetV6: only 34 layers is supported!'
         self.name = 'UNetResNetV6_'+str(encoder_depth)
-        self.num_classes = num_classes
         self.dropout_2d = dropout_2d
 
         self.resnet, bottom_channel_nr = create_resnet(encoder_depth)
-        self.conv1 = ConvBn2d(3, num_filters*2)
 
         self.encoder1 = EncoderBlock(
-            nn.Sequential(self.resnet.conv1, self.resnet.bn1, self.resnet.relu),
+            nn.Sequential(ConvBn2d(3, num_filters*2), nn.ReLU(inplace=True)),
             num_filters*2
         )
         self.encoder2 = EncoderBlock(self.resnet.layer1, bottom_channel_nr//8)
@@ -370,14 +371,14 @@ class UNetResNetV6(nn.Module):
         self.encoder4 = EncoderBlock(self.resnet.layer3, bottom_channel_nr//2)
         self.encoder5 = EncoderBlock(self.resnet.layer4, bottom_channel_nr)
 
-        center_block = nn.Sequential(
+        self.center = nn.Sequential(
             ConvBn2d(bottom_channel_nr, bottom_channel_nr, kernel_size=3, padding=1),
             nn.ReLU(inplace=True),
             ConvBn2d(bottom_channel_nr, bottom_channel_nr//2, kernel_size=3, padding=1),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(kernel_size=2, stride=2)
         )
-        self.center = EncoderBlock(center_block, bottom_channel_nr//2)
+        #self.center = EncoderBlock(center_block, bottom_channel_nr//2)
 
         self.decoder5 = DecoderBlockV5(bottom_channel_nr // 2, bottom_channel_nr,  num_filters * 16, 64)
         self.decoder4 = DecoderBlockV5(64, bottom_channel_nr // 2,  num_filters * 8,  64)
@@ -386,15 +387,13 @@ class UNetResNetV6(nn.Module):
         self.decoder1 = DecoderBlockV5(64, 0, num_filters, 64)
 
         self.logit = nn.Sequential(
-            nn.Conv2d(320, 64, kernel_size=3, padding=1),
+            nn.Conv2d(512, 64, kernel_size=3, padding=1),
             nn.ReLU(inplace=True),
             nn.Conv2d(64, 1, kernel_size=1, padding=0)
         )
 
     def forward(self, x):
-        print('x:', x.size())
-        x = self.conv1(x) ; print('x:', x.size())
-        #x = self.encoder1(x) ; print('x:', x.size())
+        x = self.encoder1(x) #; print('x:', x.size())
         e2 = self.encoder2(x) #; print('e2:', e2.size())
         e3 = self.encoder3(e2) #; print('e3:', e3.size())
         e4 = self.encoder4(e3) #; print('e4:', e4.size())
@@ -406,14 +405,14 @@ class UNetResNetV6(nn.Module):
         d4 = self.decoder4(d5, e4) #; print('d4:', d4.size())
         d3 = self.decoder3(d4, e3) #; print('d3:', d3.size())
         d2 = self.decoder2(d3, e2) #; print('d2:', d2.size())
-        d1 = self.decoder1(d2) #; print('d1:', d1.size())
+        #d1 = self.decoder1(d2) ; print('d1:', d1.size())
 
         f = torch.cat([
-            d1,
-            F.interpolate(d2, scale_factor=2, mode='bilinear', align_corners=False),
-            F.interpolate(d3, scale_factor=4, mode='bilinear', align_corners=False),
-            F.interpolate(d4, scale_factor=8, mode='bilinear', align_corners=False),
-            F.interpolate(d5, scale_factor=16, mode='bilinear', align_corners=False),
+            d2,
+            F.interpolate(d3, scale_factor=2, mode='bilinear', align_corners=False),
+            F.interpolate(d4, scale_factor=4, mode='bilinear', align_corners=False),
+            F.interpolate(d5, scale_factor=8, mode='bilinear', align_corners=False),
+            F.interpolate(center, scale_factor=16, mode='bilinear', align_corners=False),
         ], 1) 
 
         f = F.dropout2d(f, p=self.dropout_2d)
@@ -428,7 +427,7 @@ class UNetResNetV6(nn.Module):
 
     def get_params(self, base_lr):
         group1 = [self.encoder1, self.encoder2, self.encoder3, self.encoder4, self.encoder5]
-        group2 = [self.decoder1, self.decoder2, self.decoder3, self.decoder4, self.decoder5, self.center, self.logit]
+        group2 = [self.decoder2, self.decoder3, self.decoder4, self.decoder5, self.center, self.logit]
 
         params1 = []
         for x in group1:
