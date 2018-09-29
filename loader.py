@@ -55,7 +55,8 @@ class ImageDataset(data.Dataset):
     def aug_image(self, img, mask=None):
         if mask is not None:
             Xi, Mi = from_pil(img, mask)
-            #print('>>>', Xi.shape, Mi.shape)
+            #print('>>>', type(Xi), Xi.shape)
+            Xi = add_depth_channel_to_array(Xi)
             #print(Mi)
             Xi, Mi = self.augment_with_target(Xi, Mi)
             if self.image_augment is not None:
@@ -71,6 +72,7 @@ class ImageDataset(data.Dataset):
             return Xi, Mi#torch.cat(Mi, dim=0)
         else:
             Xi = from_pil(img)
+            Xi = add_depth_channel_to_array(Xi)
             Xi = self.image_augment(Xi)
             Xi = to_pil(Xi)
 
@@ -120,9 +122,10 @@ def to_tensor(x):
     return x_
 
 img_transforms = [
-    transforms.Grayscale(num_output_channels=3),
+    #transforms.Grayscale(num_output_channels=3),  need to remove for depths channel
     transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    #transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    transforms.Normalize(mean=[0.485], std=[0.229])  # need to remove last 2 channels for depths channels
     ]
 
 def get_tta_transforms(index):
@@ -194,6 +197,15 @@ def get_depth_tensor():
 
 depth_channel_tensor = get_depth_tensor()
 
+def get_depth_np_101():
+    depth_array = np.zeros((ORIG_H, ORIG_W))
+    for row in range(ORIG_H):
+        depth_array[row, :] = row*2
+
+    return depth_array
+
+depth_channel_array = get_depth_np_101()
+
 def add_depth_channel(img_tensor):
     '''
     img_tensor: N, C, H, W
@@ -201,6 +213,16 @@ def add_depth_channel(img_tensor):
     img_tensor[:, 1] = depth_channel_tensor
     img_tensor[:, 2] = img_tensor[:, 0] * depth_channel_tensor
 
+def add_depth_channel_to_array(img):
+    '''
+    img: np array with shape 101, 101, 3
+    '''
+    new_img = np.transpose(img, (2,0,1))
+
+    new_img[1] = depth_channel_array
+    new_img[2] = new_img[0] * depth_channel_array
+
+    return np.transpose(new_img, (1,2,0))
 
 def test_train_loader():
     train_loader, val_loader = get_train_loaders(0, batch_size=4, dev_mode=True)
@@ -209,8 +231,9 @@ def test_train_loader():
         imgs, masks, salt_exists = data
         #pdb.set_trace()
         print(imgs.size(), masks.size(), salt_exists.size())
-        print(salt_exists)
-        add_depth_channel(imgs)
+        #print(salt_exists)
+        #add_depth_channel(imgs)
+        print(imgs[:,:,30:40, 50:80])
         #print(imgs)
         #print(masks)
 

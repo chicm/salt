@@ -51,16 +51,16 @@ def get_affine_seq_depths(pad_mode='edge'):
 def get_affine_seq(pad_mode='reflect'):
     affine_seq = iaa.Sequential([
         # General
-        iaa.Fliplr(0.3),
-        iaa.Flipud(0.3), 
+        iaa.Fliplr(0.5),
+        iaa.Flipud(0.5), 
         iaa.Affine(
             scale={"x": (0.9, 1.1), "y": (0.9, 1.1)},
             rotate=(-10, 10),
             translate_percent={"x": (-0.15, 0.15), "y": (-0.15, 0.15)}, mode=pad_mode #'reflect' #symmetric
         ),
         # Deformations
-        #iaa.Sometimes(0.3, iaa.PiecewiseAffine(scale=(0.04, 0.08))),
-        #iaa.Sometimes(0.3, iaa.PerspectiveTransform(scale=(0.05, 0.1))),
+        iaa.Sometimes(0.3, iaa.PiecewiseAffine(scale=(0.04, 0.08))),
+        iaa.Sometimes(0.3, iaa.PerspectiveTransform(scale=(0.05, 0.1))),
     ], random_order=True)
     return affine_seq
 
@@ -95,7 +95,7 @@ brightness_seq =  iaa.Sequential([
 def crop_seq(crop_size, pad_size, pad_method):
     seq = iaa.Sequential([
             PadFixed(pad=pad_size, pad_method=pad_method),
-            get_affine_seq_depths(pad_method), 
+            get_affine_seq(pad_method), 
             RandomCropFixedSize(px=crop_size)
         ], 
         random_order=False)

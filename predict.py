@@ -5,7 +5,7 @@ import torch.optim as optim
 import torch.nn.functional as F
 
 import settings
-from loader import get_test_loader, add_depth_channel
+from loader import get_test_loader #, add_depth_channel
 from unet_models import UNetResNet
 from unet_new import UNetResNetV4
 from postprocessing import crop_image, binarize, crop_image_softmax
@@ -30,7 +30,7 @@ def do_tta_predict(model, tta_num=4):
         outputs = None
         with torch.no_grad():
             for i, img in enumerate(test_loader):
-                add_depth_channel(img)
+                #add_depth_channel(img)
                 img = img.cuda()
                 output, _ = model(img)
                 output = torch.sigmoid(output)

@@ -10,7 +10,7 @@ import torch.nn.functional as F
 from torch.optim.lr_scheduler import ExponentialLR, CosineAnnealingLR, _LRScheduler, ReduceLROnPlateau
 import pdb
 import settings
-from loader import get_train_loaders, add_depth_channel
+from loader import get_train_loaders
 from unet_models import UNetResNet, UNetResNetAtt, UNetResNetV3
 from unet_new import UNetResNetV4
 from unet_se import UNetResNetSE
@@ -99,7 +99,7 @@ def train(args):
         bg = time.time()
         for batch_idx, data in enumerate(train_loader):
             img, target, salt_target = data
-            add_depth_channel(img)
+            #add_depth_channel(img)
             img, target, salt_target = img.cuda(), target.cuda(), salt_target.cuda()
             optimizer.zero_grad()
             output, salt_out = model(img)
@@ -154,7 +154,7 @@ def validate(args, model, val_loader, epoch=0, threshold=0.5):
     val_loss = 0
     with torch.no_grad():
         for img, target, salt_target in val_loader:
-            add_depth_channel(img)
+            #add_depth_channel(img)
             img, target, salt_target = img.cuda(), target.cuda(), salt_target.cuda()
             output, salt_out = model(img)
             #print(output.size(), salt_out.size())
@@ -234,7 +234,7 @@ if __name__ == '__main__':
     parser.add_argument('--factor', default=0.5, type=float, help='lr scheduler factor')
     parser.add_argument('--t_max', default=8, type=int, help='lr scheduler patience')
     parser.add_argument('--pad_mode', default='edge', choices=['reflect', 'edge'], help='pad method')
-    parser.add_argument('--exp_name', default='depths', type=str, help='exp name')
+    parser.add_argument('--exp_name', default='pre_depths', type=str, help='exp name')
     args = parser.parse_args()
 
     print(args)
