@@ -45,9 +45,9 @@ def weighted_loss(output, target, epoch=0):
     #dice_loss = mixed_dice_bce_loss(mask_output, mask_target)
     focal_loss = focal_loss2d(mask_output, mask_target)
     if epoch < 10:
-        return focal_loss
+        return focal_loss, focal_loss.item(), lovasz_loss.item()
     else:
-        return lovasz_loss #, lovasz_loss.item(), bce_loss.item()
+        return lovasz_loss, focal_loss.item(), lovasz_loss.item() #, lovasz_loss.item(), bce_loss.item()
 
 def train(args):
     print('start training...')
@@ -81,7 +81,10 @@ def train(args):
         lr_scheduler = CosineAnnealingLR(optimizer, args.t_max, eta_min=args.min_lr)
     #ExponentialLR(optimizer, 0.9, last_epoch=-1) #CosineAnnealingLR(optimizer, 15, 1e-7) 
 
-    best_iout, _, _ = validate(args, model, val_loader, args.start_epoch)
+    print('epoch |   lr    |   %       |  loss  |  avg   | f loss | lovaz  |  iou   | iout   |  best  | time | save |')
+
+    best_iout, _iou, _f, _l = validate(args, model, val_loader, args.start_epoch)
+    print('val   |         |           |        |        | {:.4f} | {:.4f} | {:.4f} | {:.4f} | {:.4f} |'.format(_f, _l, _iou, best_iout, best_iout))
     if args.val:
         return
 
@@ -98,7 +101,6 @@ def train(args):
         #if epoch < 5:
         #    model.freeze_bn()
         current_lr = get_lrs(optimizer)  #optimizer.state_dict()['param_groups'][2]['lr']
-        print('lr:', current_lr)
         bg = time.time()
         for batch_idx, data in enumerate(train_loader):
             img, target, salt_target = data
@@ -106,7 +108,7 @@ def train(args):
             optimizer.zero_grad()
             output, salt_out = model(img)
             
-            loss = weighted_loss((output, salt_out), (target, salt_target), epoch=epoch)
+            loss, _, _ = weighted_loss((output, salt_out), (target, salt_target), epoch=epoch)
             loss.backward()
  
             # adamW
@@ -118,20 +120,20 @@ def train(args):
             optimizer.step()
 
             train_loss += loss.item()
-            print('epoch {}: {}/{} batch loss: {:.4f}, avg loss: {:.4f} lr: {}'
-                .format(epoch, args.batch_size*(batch_idx+1), train_loader.num, loss.item(), train_loss/(batch_idx+1), current_lr), end='\r')
-        print('\n')
-        print('epoch {}: {:.2f} minutes'.format(epoch, (time.time() - bg) / 60))
+            print('\r {:4d} | {:.5f} | {:4d}/{} | {:.4f} | {:.4f} |'.format(epoch, float(current_lr[0]), args.batch_size*(batch_idx+1), train_loader.num, loss.item(), train_loss/(batch_idx+1)), end='')
 
-        iout, iou, val_loss = validate(args, model, val_loader, epoch=epoch)
-
+        iout, iou, focal_loss, lovaz_loss = validate(args, model, val_loader, epoch=epoch)
+        
+        _save_ckp = ''
         if iout > best_iout:
             best_iout = iout
-            print('saving {}...'.format(model_file))
             torch.save(model.state_dict(), model_file)
+            _save_ckp = '*'
+        # print('epoch |   %       |  loss  |  avg   | f loss | lovaz  |  iou   | iout   |  best  |   lr    | time | save |')
+        print(' {:.4f} | {:.4f} | {:.4f} | {:.4f} | {:.4f} | {:.2f} | {:4s} |'.format(focal_loss, lovaz_loss, iou, iout, best_iout, (time.time() - bg) / 60, _save_ckp))
 
-        log.info('epoch {}: train loss: {:.4f} val loss: {:.4f} iout: {:.4f} best iout: {:.4f} iou: {:.4f} lr: {}'
-            .format(epoch, train_loss, val_loss, iout, best_iout, iou, current_lr))
+        log.info('epoch {}: train loss: {:.4f} focal loss: {:.4f} lovaz loss: {:.4f} iout: {:.4f} best iout: {:.4f} iou: {:.4f} lr: {} {}'
+            .format(epoch, train_loss, focal_loss, lovaz_loss, iout, best_iout, iou, current_lr, _save_ckp))
 
         model.train()
         
@@ -151,17 +153,18 @@ def get_lrs(optimizer):
 
 def validate(args, model, val_loader, epoch=0, threshold=0.5):
     model.eval()
-    print('validating...')
+    #print('validating...')
     outputs = []
-    val_loss = 0
+    focal_loss, lovaz_loss = 0, 0
     with torch.no_grad():
         for img, target, salt_target in val_loader:
             img, target, salt_target = img.cuda(), target.cuda(), salt_target.cuda()
             output, salt_out = model(img)
             #print(output.size(), salt_out.size())
 
-            loss = weighted_loss((output, salt_out), (target, salt_target), epoch=epoch)
-            val_loss += loss.item()
+            _, floss, lovaz = weighted_loss((output, salt_out), (target, salt_target), epoch=epoch)
+            focal_loss += floss
+            lovaz_loss += lovaz
             output = torch.sigmoid(output)
             
             for o in output.cpu():
@@ -171,15 +174,13 @@ def validate(args, model, val_loader, epoch=0, threshold=0.5):
 
     # y_pred, list of 400 np array, each np array's shape is 101,101
     y_pred = generate_preds_softmax(outputs, (settings.ORIG_H, settings.ORIG_W), threshold)
-    print(y_pred[0].shape)
-    print('Validation loss: {:.4f}'.format(val_loss/n_batches))
 
     iou_score = intersection_over_union(val_loader.y_true, y_pred)
     iout_score = intersection_over_union_thresholds(val_loader.y_true, y_pred)
-    print('IOU score on validation is {:.4f}'.format(iou_score))
-    print('IOUT score on validation is {:.4f}'.format(iout_score))
+    #print('IOU score on validation is {:.4f}'.format(iou_score))
+    #print('IOUT score on validation is {:.4f}'.format(iout_score))
 
-    return iout_score, iou_score, val_loss / n_batches
+    return iout_score, iou_score, focal_loss / n_batches, lovaz_loss / n_batches
 
 def find_threshold(args):
     #ckp = r'G:\salt\models\152\ensemble_822\best_3.pth'
