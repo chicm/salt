@@ -12,7 +12,7 @@ import pdb
 import settings
 from loader import get_train_loaders, add_depth_channel
 from unet_models import UNetResNet, UNetResNetAtt, UNetResNetV3
-from unet_new import UNetResNetV4
+from unet_new import UNetResNetV4, UNetResNetV5, UNetResNetV6
 from unet_se import UNetResNetSE
 from lovasz_losses import lovasz_hinge, lovasz_softmax
 from dice_losses import mixed_dice_bce_loss, FocalLoss2d
@@ -52,7 +52,7 @@ def weighted_loss(output, target, epoch=0):
 def train(args):
     print('start training...')
 
-    model = UNetResNetV4(args.layers)
+    model = eval(args.model_name)(args.layers)
     if args.exp_name is None:
         model_file = os.path.join(MODEL_DIR, model.name, 'best_{}.pth'.format(args.ifold))
     else:
@@ -235,6 +235,7 @@ if __name__ == '__main__':
     parser.add_argument('--t_max', default=8, type=int, help='lr scheduler patience')
     parser.add_argument('--pad_mode', default='edge', choices=['reflect', 'edge'], help='pad method')
     parser.add_argument('--exp_name', default='depths', type=str, help='exp name')
+    parser.add_argument('--model_name', default='UNetResNetV4', type=str, help='')
     args = parser.parse_args()
 
     print(args)
