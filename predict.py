@@ -1,4 +1,5 @@
 import os
+import glob
 import numpy as np
 import torch
 import torch.optim as optim
@@ -14,7 +15,7 @@ from utils import create_submission
 
 batch_size = 64
 
-def do_tta_predict(model, tta_num=4):
+def do_tta_predict(model, ckp_path, tta_num=4):
     '''
     return 18000x128x128 np array
     '''
@@ -50,7 +51,16 @@ def do_tta_predict(model, tta_num=4):
             outputs = np.flip(outputs, 1)
         #print(outputs.shape)
         preds.append(outputs)
-    return np.mean(preds, 0), meta
+    
+    parent_dir = ckp_path+'_out'
+    if not os.path.exists(parent_dir):
+        os.makedirs(parent_dir)
+    np_file = os.path.join(parent_dir, 'pred.npy')
+
+    model_pred_result = np.mean(preds, 0)
+    np.save(np_file, model_pred_result)
+
+    return model_pred_result, meta
 
 def predict():
     model = UNetResNet(152, pretrained=True, is_deconv=True)
@@ -59,7 +69,7 @@ def predict():
     model.load_state_dict(torch.load(CKP))
     model = model.cuda()
 
-    pred, meta = do_tta_predict(model)
+    pred, meta = do_tta_predict(model, CKP)
     print(pred.shape)
     y_pred_test = generate_preds_softmax(pred, (settings.ORIG_H, settings.ORIG_W))
 
@@ -78,7 +88,7 @@ def ensemble(checkpoints):
         model = model.cuda()
         print('predicting...', checkpoint)
 
-        pred, meta = do_tta_predict(model, tta_num=4)
+        pred, meta = do_tta_predict(model, checkpoint, tta_num=4)
         preds.append(pred)
 
     y_pred_test = generate_preds_softmax(np.mean(preds, 0), (settings.ORIG_H, settings.ORIG_W))
@@ -86,6 +96,22 @@ def ensemble(checkpoints):
     submission = create_submission(meta, y_pred_test)
     submission_filepath = 'ensemble_res34_0123_tta4.csv'
     submission.to_csv(submission_filepath, index=None, encoding='utf-8')
+
+def ensemble_np(np_files):
+    preds = []
+    for np_file in np_files:
+        pred = np.load(np_file)
+        print(np_file, pred.shape)
+        preds.append(pred)
+
+    y_pred_test = generate_preds_softmax(np.mean(preds, 0), (settings.ORIG_H, settings.ORIG_W))
+
+    meta = get_test_loader(batch_size, index=0, dev_mode=False).meta
+
+    submission = create_submission(meta, y_pred_test)
+    submission_filepath = 'ensemble_depths_res34_single1_tta2_1.csv'
+    submission.to_csv(submission_filepath, index=None, encoding='utf-8')
+
 
 def generate_preds(outputs, target_size):
     preds = []
@@ -112,9 +138,22 @@ if __name__ == '__main__':
     #    r'G:\salt\models\152_new\best_0.pth', r'G:\salt\models\152_new\best_1.pth',
     #    r'G:\salt\models\152_new\best_2.pth'
     #]
-    checkpoints = [
-        r'D:\data\salt\models\UNetResNetV4_34\best_0.pth', r'D:\data\salt\models\UNetResNetV4_34\best_1.pth',
-        r'D:\data\salt\models\UNetResNetV4_34\best_2.pth', r'D:\data\salt\models\UNetResNetV4_34\best_3.pth'
-    ]
-    #predict()
-    ensemble(checkpoints)
+    #checkpoints = [ LB841
+    #    r'D:\data\salt\models\UNetResNetV4_34\best_0.pth', r'D:\data\salt\models\UNetResNetV4_34\best_1.pth',
+    #    r'D:\data\salt\models\UNetResNetV4_34\best_2.pth'#, r'D:\data\salt\models\UNetResNetV4_34\best_3.pth'
+    #]
+    
+    # LB861
+    #checkpoints = [
+    #    r'D:\data\salt\models\depths\UNetResNetV4_34\best_0.pth', 
+    #    r'D:\data\salt\models\depths\UNetResNetV4_34\best_1.pth',
+    #    r'D:\data\salt\models\depths\UNetResNetV4_34\best_2.pth',
+    #    r'D:\data\salt\models\depths\UNetResNetV4_34\best_3.pth'
+    #]
+
+    #checkpoints= glob.glob(r'D:\data\salt\models\depths\UNetResNetV4_34\*.pth')
+    #print(checkpoints)
+    #ensemble(checkpoints)
+
+    np_files = glob.glob(r'D:\data\salt\models\depths\UNetResNetV4_34\*out\*.npy')
+    ensemble_np(np_files)
