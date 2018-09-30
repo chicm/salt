@@ -363,9 +363,10 @@ class UNetResNetV6(nn.Module):
         self.resnet, bottom_channel_nr = create_resnet(encoder_depth)
 
         self.encoder1 = EncoderBlock(
-            nn.Sequential(ConvBn2d(3, num_filters*2), nn.ReLU(inplace=True)),
+            nn.Sequential(self.resnet.conv1, self.resnet.bn1, self.resnet.relu),
             num_filters*2
         )
+
         self.encoder2 = EncoderBlock(self.resnet.layer1, bottom_channel_nr//8)
         self.encoder3 = EncoderBlock(self.resnet.layer2, bottom_channel_nr//4)
         self.encoder4 = EncoderBlock(self.resnet.layer3, bottom_channel_nr//2)
@@ -392,7 +393,14 @@ class UNetResNetV6(nn.Module):
             nn.Conv2d(64, 1, kernel_size=1, padding=0)
         )
 
+        self.logit_image = nn.Sequential(
+            nn.Linear(512, 128),
+            nn.ReLU(inplace=True),
+            nn.Linear(128, 1)
+        )
+
     def forward(self, x):
+        x = F.interpolate(x, scale_factor=2, mode='bilinear', align_corners=False)
         x = self.encoder1(x) #; print('x:', x.size())
         e2 = self.encoder2(x) #; print('e2:', e2.size())
         e3 = self.encoder3(e2) #; print('e3:', e3.size())
@@ -415,9 +423,14 @@ class UNetResNetV6(nn.Module):
             F.interpolate(center, scale_factor=16, mode='bilinear', align_corners=False),
         ], 1) 
 
-        f = F.dropout2d(f, p=self.dropout_2d)
+        f = F.dropout2d(f, p=self.dropout_2d, training=self.training)
 
-        return self.logit(f), None
+        # empty mask classifier
+        img_f = F.adaptive_avg_pool2d(e5, 1).view(x.size(0), -1)
+        img_f = F.dropout(img_f, p=0.5, training=self.training)
+        img_logit = self.logit_image(img_f).view(-1)
+
+        return self.logit(f), img_logit
     
     def freeze_bn(self):
         '''Freeze BatchNorm layers.'''
@@ -451,7 +464,7 @@ def test():
     inputs = torch.randn(2,3,128,128).cuda()
     out, _ = model(inputs)
     #print(model)
-    print(out.size()) #, cls_taret.size())
+    print(out.size(), _.size()) #, cls_taret.size())
     #print(out)
 
 
