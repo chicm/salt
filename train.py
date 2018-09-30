@@ -82,6 +82,9 @@ def train(args):
     #ExponentialLR(optimizer, 0.9, last_epoch=-1) #CosineAnnealingLR(optimizer, 15, 1e-7) 
 
     best_iout, _, _ = validate(args, model, val_loader, args.start_epoch)
+    if args.val:
+        return
+
     model.train()
 
     if args.lrs == 'plateau':
@@ -234,6 +237,7 @@ if __name__ == '__main__':
     parser.add_argument('--pad_mode', default='reflect', choices=['reflect', 'edge'], help='pad method')
     parser.add_argument('--exp_name', default=None, type=str, help='exp name')
     parser.add_argument('--model_name', default='UNetResNetV4', type=str, help='')
+    parser.add_argument('--val', action='store_true')
     args = parser.parse_args()
 
     print(args)
