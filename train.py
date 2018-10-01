@@ -12,7 +12,7 @@ import pdb
 import settings
 from loader import get_train_loaders
 from unet_models import UNetResNet, UNetResNetAtt, UNetResNetV3
-from unet_new import UNetResNetV4, UNetResNetV5, UNetResNetV6
+from unet_new import UNetResNetV4, UNetResNetV5, UNetResNetV6, UNet7
 from unet_se import UNetResNetSE
 from lovasz_losses import lovasz_hinge, lovasz_softmax
 from dice_losses import mixed_dice_bce_loss, FocalLoss2d
@@ -37,24 +37,34 @@ class CyclicExponentialLR(_LRScheduler):
         self.last_lr = lr
         return [lr]*len(self.base_lrs)
 
-def weighted_loss(output, target, epoch=0):
-    mask_output, _ = output
-    mask_target, _ = target
-    
+def weighted_loss(args, output, target, epoch=0):
+    mask_output, salt_output = output
+    mask_target, salt_target = target
+
     lovasz_loss = lovasz_hinge(mask_output, mask_target)
     #dice_loss = mixed_dice_bce_loss(mask_output, mask_target)
     focal_loss = focal_loss2d(mask_output, mask_target)
+
+    salt_loss_value = 0.
+    if salt_output is not None:
+        salt_loss = F.binary_cross_entropy_with_logits(salt_output, salt_target)
+        salt_loss_value = salt_loss.item()
     
-    # four losses for: 1. grad, 2, display, 3, display 4, measurement
     if epoch < 10:
-        return focal_loss, focal_loss.item(), lovasz_loss.item(), lovasz_loss.item() + focal_loss.item()
+        grad_loss = focal_loss
     else:
-        return lovasz_loss + focal_loss, focal_loss.item(), lovasz_loss.item(), lovasz_loss.item() + focal_loss.item()
+        grad_loss = lovasz_loss + focal_loss
+
+    if args.train_cls and salt_output is not None:
+        grad_loss += salt_loss
+
+    # four losses for: 1. grad, 2, display, 3, display 4, measurement
+    return grad_loss, focal_loss.item(), lovasz_loss.item(), salt_loss_value, lovasz_loss.item() + focal_loss.item()
 
 def train(args):
     print('start training...')
 
-    model = eval(args.model_name)(args.layers)
+    model = eval(args.model_name)(args.layers, num_filters=args.nf)
     if args.exp_name is None:
         model_file = os.path.join(MODEL_DIR, model.name, 'best_{}.pth'.format(args.ifold))
     else:
@@ -83,10 +93,11 @@ def train(args):
         lr_scheduler = CosineAnnealingLR(optimizer, args.t_max, eta_min=args.min_lr)
     #ExponentialLR(optimizer, 0.9, last_epoch=-1) #CosineAnnealingLR(optimizer, 15, 1e-7) 
 
-    print('epoch |   lr    |   %       |  loss  |  avg   | f loss | lovaz  |  iou   | iout   |  best  | time | save |')
+    print('epoch |   lr    |   %       |  loss  |  avg   | f loss | lovaz  |  iou   | iout   |  best  | time | save |  salt  |')
 
-    best_iout, _iou, _f, _l, best_mix_score = validate(args, model, val_loader, args.start_epoch)
-    print('val   |         |           |        |        | {:.4f} | {:.4f} | {:.4f} | {:.4f} | {:.4f} |'.format(_f, _l, _iou, best_iout, best_iout))
+    best_iout, _iou, _f, _l, _salt, best_mix_score = validate(args, model, val_loader, args.start_epoch)
+    print('val   |         |           |        |        | {:.4f} | {:.4f} | {:.4f} | {:.4f} | {:.4f} |      |      | {:.4f} |'.format(
+        _f, _l, _iou, best_iout, best_iout, _salt))
     if args.val:
         return
 
@@ -110,7 +121,7 @@ def train(args):
             optimizer.zero_grad()
             output, salt_out = model(img)
             
-            loss, _, _, _ = weighted_loss((output, salt_out), (target, salt_target), epoch=epoch)
+            loss, *_ = weighted_loss(args, (output, salt_out), (target, salt_target), epoch=epoch)
             loss.backward()
  
             # adamW
@@ -122,9 +133,10 @@ def train(args):
             optimizer.step()
 
             train_loss += loss.item()
-            print('\r {:4d} | {:.5f} | {:4d}/{} | {:.4f} | {:.4f} |'.format(epoch, float(current_lr[0]), args.batch_size*(batch_idx+1), train_loader.num, loss.item(), train_loss/(batch_idx+1)), end='')
+            print('\r {:4d} | {:.5f} | {:4d}/{} | {:.4f} | {:.4f} |'.format(
+                epoch, float(current_lr[0]), args.batch_size*(batch_idx+1), train_loader.num, loss.item(), train_loss/(batch_idx+1)), end='')
 
-        iout, iou, focal_loss, lovaz_loss, mix_score = validate(args, model, val_loader, epoch=epoch)
+        iout, iou, focal_loss, lovaz_loss, salt_loss, mix_score = validate(args, model, val_loader, epoch=epoch)
         
         _save_ckp = ''
         if iout > best_iout:
@@ -136,7 +148,8 @@ def train(args):
             torch.save(model.state_dict(), model_file+'_loss')
             _save_ckp += '.'
         # print('epoch |   %       |  loss  |  avg   | f loss | lovaz  |  iou   | iout   |  best  |   lr    | time | save |')
-        print(' {:.4f} | {:.4f} | {:.4f} | {:.4f} | {:.4f} | {:.2f} | {:4s} |'.format(focal_loss, lovaz_loss, iou, iout, best_iout, (time.time() - bg) / 60, _save_ckp))
+        print(' {:.4f} | {:.4f} | {:.4f} | {:.4f} | {:.4f} | {:.2f} | {:4s} | {:.4f} |'.format(
+            focal_loss, lovaz_loss, iou, iout, best_iout, (time.time() - bg) / 60, _save_ckp, salt_loss))
 
         log.info('epoch {}: train loss: {:.4f} focal loss: {:.4f} lovaz loss: {:.4f} iout: {:.4f} best iout: {:.4f} iou: {:.4f} lr: {} {}'
             .format(epoch, train_loss, focal_loss, lovaz_loss, iout, best_iout, iou, current_lr, _save_ckp))
@@ -161,16 +174,17 @@ def validate(args, model, val_loader, epoch=0, threshold=0.5):
     model.eval()
     #print('validating...')
     outputs = []
-    focal_loss, lovaz_loss, w_loss = 0, 0, 0
+    focal_loss, lovaz_loss, salt_loss, w_loss = 0, 0, 0, 0
     with torch.no_grad():
         for img, target, salt_target in val_loader:
             img, target, salt_target = img.cuda(), target.cuda(), salt_target.cuda()
             output, salt_out = model(img)
             #print(output.size(), salt_out.size())
 
-            _, floss, lovaz, _w_loss = weighted_loss((output, salt_out), (target, salt_target), epoch=epoch)
+            _, floss, lovaz, _salt_loss, _w_loss = weighted_loss(args, (output, salt_out), (target, salt_target), epoch=epoch)
             focal_loss += floss
             lovaz_loss += lovaz
+            salt_loss += _salt_loss
             w_loss += _w_loss
             output = torch.sigmoid(output)
             
@@ -187,7 +201,7 @@ def validate(args, model, val_loader, epoch=0, threshold=0.5):
     #print('IOU score on validation is {:.4f}'.format(iou_score))
     #print('IOUT score on validation is {:.4f}'.format(iout_score))
 
-    return iout_score, iou_score, focal_loss / n_batches, lovaz_loss / n_batches, iout_score*4 - w_loss
+    return iout_score, iou_score, focal_loss / n_batches, lovaz_loss / n_batches, salt_loss / n_batches, iout_score*4 - w_loss
 
 def find_threshold(args):
     #ckp = r'G:\salt\models\152\ensemble_822\best_3.pth'
@@ -231,6 +245,7 @@ if __name__ == '__main__':
     
     parser = argparse.ArgumentParser(description='Salt segmentation')
     parser.add_argument('--layers', default=34, type=int, help='model layers')
+    parser.add_argument('--nf', default=32, type=int, help='num_filters param for model')
     parser.add_argument('--lr', default=0.002, type=float, help='learning rate')
     parser.add_argument('--min_lr', default=0.0002, type=float, help='min learning rate')
     parser.add_argument('--ifolds', default='0', type=str, help='kfold indices')
@@ -247,6 +262,7 @@ if __name__ == '__main__':
     parser.add_argument('--model_name', default='UNetResNetV4', type=str, help='')
     parser.add_argument('--val', action='store_true')
     parser.add_argument('--store_loss_model', action='store_true')
+    parser.add_argument('--train_cls', action='store_true')
     args = parser.parse_args()
 
     print(args)
