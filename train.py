@@ -47,9 +47,9 @@ def weighted_loss(output, target, epoch=0):
     
     # four losses for: 1. grad, 2, display, 3, display 4, measurement
     if epoch < 10:
-        return focal_loss, focal_loss.item(), lovasz_loss.item(), lovasz_loss.item() + focal_loss.item() * 7
+        return focal_loss, focal_loss.item(), lovasz_loss.item(), lovasz_loss.item() + focal_loss.item() * 2
     else:
-        return lovasz_loss + focal_loss * 7, focal_loss.item(), lovasz_loss.item(), lovasz_loss.item() + focal_loss.item() * 7
+        return lovasz_loss + focal_loss * 2, focal_loss.item(), lovasz_loss.item(), lovasz_loss.item() + focal_loss.item() * 2
 
 def train(args):
     print('start training...')
@@ -85,7 +85,7 @@ def train(args):
 
     print('epoch |   lr    |   %       |  loss  |  avg   | f loss | lovaz  |  iou   | iout   |  best  | time | save |')
 
-    best_iout, _iou, _f, _l, best_loss = validate(args, model, val_loader, args.start_epoch)
+    best_iout, _iou, _f, _l, best_mix_score = validate(args, model, val_loader, args.start_epoch)
     print('val   |         |           |        |        | {:.4f} | {:.4f} | {:.4f} | {:.4f} | {:.4f} |'.format(_f, _l, _iou, best_iout, best_iout))
     if args.val:
         return
@@ -124,15 +124,15 @@ def train(args):
             train_loss += loss.item()
             print('\r {:4d} | {:.5f} | {:4d}/{} | {:.4f} | {:.4f} |'.format(epoch, float(current_lr[0]), args.batch_size*(batch_idx+1), train_loader.num, loss.item(), train_loss/(batch_idx+1)), end='')
 
-        iout, iou, focal_loss, lovaz_loss, w_loss = validate(args, model, val_loader, epoch=epoch)
+        iout, iou, focal_loss, lovaz_loss, mix_score = validate(args, model, val_loader, epoch=epoch)
         
         _save_ckp = ''
         if iout > best_iout:
             best_iout = iout
             torch.save(model.state_dict(), model_file)
             _save_ckp = '*'
-        if w_loss < best_loss:
-            best_loss = w_loss
+        if mix_score > best_mix_score:
+            best_mix_score = mix_score
             torch.save(model.state_dict(), model_file+'_loss')
             _save_ckp += '.'
         # print('epoch |   %       |  loss  |  avg   | f loss | lovaz  |  iou   | iout   |  best  |   lr    | time | save |')
@@ -187,7 +187,7 @@ def validate(args, model, val_loader, epoch=0, threshold=0.5):
     #print('IOU score on validation is {:.4f}'.format(iou_score))
     #print('IOUT score on validation is {:.4f}'.format(iout_score))
 
-    return iout_score, iou_score, focal_loss / n_batches, lovaz_loss / n_batches, w_loss
+    return iout_score, iou_score, focal_loss / n_batches, lovaz_loss / n_batches, iout_score - w_loss
 
 def find_threshold(args):
     #ckp = r'G:\salt\models\152\ensemble_822\best_3.pth'
