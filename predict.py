@@ -8,12 +8,12 @@ import torch.nn.functional as F
 import settings
 from loader import get_test_loader, add_depth_channel
 from unet_models import UNetResNet
-from unet_new import UNetResNetV4
+from unet_new import UNetResNetV4, UNetResNetV5
 from postprocessing import crop_image, binarize, crop_image_softmax
 from metrics import intersection_over_union, intersection_over_union_thresholds
 from utils import create_submission
 
-batch_size = 64
+batch_size = 32
 
 def do_tta_predict(model, ckp_path, tta_num=4):
     '''
@@ -80,7 +80,7 @@ def predict():
 
 
 def ensemble(checkpoints):
-    model = UNetResNetV4(34)
+    model = UNetResNetV5(50)
 
     preds = []
     meta = None
@@ -95,7 +95,7 @@ def ensemble(checkpoints):
     y_pred_test = generate_preds_softmax(np.mean(preds, 0), (settings.ORIG_H, settings.ORIG_W))
 
     submission = create_submission(meta, y_pred_test)
-    submission_filepath = 'ensemble_depths_res34_0123_tta2_1.csv'
+    submission_filepath = 'ensemble_depths_res50_0123_8models.csv'
     submission.to_csv(submission_filepath, index=None, encoding='utf-8')
 
 def ensemble_np(np_files):
@@ -110,7 +110,7 @@ def ensemble_np(np_files):
     meta = get_test_loader(batch_size, index=0, dev_mode=False).meta
 
     submission = create_submission(meta, y_pred_test)
-    submission_filepath = 'ensemble_depths_res34_single1_tta2_1.csv'
+    submission_filepath = 'ensemble_depths_res50_34_8model_tta2_1.csv'
     submission.to_csv(submission_filepath, index=None, encoding='utf-8')
 
 
@@ -152,9 +152,12 @@ if __name__ == '__main__':
     #    r'D:\data\salt\models\depths\UNetResNetV4_34\best_3.pth'
     #]
 
-    #checkpoints= glob.glob(r'D:\data\salt\models\depths\UNetResNetV4_34\*.pth')
+    #checkpoints= glob.glob(r'D:\data\salt\models\depths\UNetResNetV5_50\best*')
     #print(checkpoints)
     #ensemble(checkpoints)
 
-    np_files = glob.glob(r'D:\data\salt\models\depths\UNetResNetV4_34\*out\*.npy')
+    np_files1 = glob.glob(r'D:\data\salt\models\depths\UNetResNetV5_50\*pth_out\*.npy')
+    np_files2 = glob.glob(r'D:\data\salt\models\depths\UNetResNetV4_34\*pth_out\*.npy')
+    np_files = np_files1+np_files2
+    print(np_files)
     ensemble_np(np_files)
