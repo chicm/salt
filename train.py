@@ -45,10 +45,11 @@ def weighted_loss(output, target, epoch=0):
     #dice_loss = mixed_dice_bce_loss(mask_output, mask_target)
     focal_loss = focal_loss2d(mask_output, mask_target)
     
+    # four losses for: 1. grad, 2, display, 3, display 4, measurement
     if epoch < 10:
-        return focal_loss, focal_loss.item(), lovasz_loss.item()
+        return focal_loss, focal_loss.item(), lovasz_loss.item(), lovasz_loss.item() + focal_loss.item() * 7
     else:
-        return lovasz_loss + focal_loss * 7, focal_loss.item(), lovasz_loss.item() #, lovasz_loss.item(), bce_loss.item()
+        return lovasz_loss + focal_loss * 7, focal_loss.item(), lovasz_loss.item(), lovasz_loss.item() + focal_loss.item() * 7
 
 def train(args):
     print('start training...')
@@ -110,7 +111,7 @@ def train(args):
             optimizer.zero_grad()
             output, salt_out = model(img)
             
-            loss, _, _ = weighted_loss((output, salt_out), (target, salt_target), epoch=epoch)
+            loss, _, _, _ = weighted_loss((output, salt_out), (target, salt_target), epoch=epoch)
             loss.backward()
  
             # adamW
@@ -169,10 +170,10 @@ def validate(args, model, val_loader, epoch=0, threshold=0.5):
             output, salt_out = model(img)
             #print(output.size(), salt_out.size())
 
-            _w_loss, floss, lovaz = weighted_loss((output, salt_out), (target, salt_target), epoch=epoch)
+            _, floss, lovaz, _w_loss = weighted_loss((output, salt_out), (target, salt_target), epoch=epoch)
             focal_loss += floss
             lovaz_loss += lovaz
-            w_loss += _w_loss.item()
+            w_loss += _w_loss
             output = torch.sigmoid(output)
             
             for o in output.cpu():
