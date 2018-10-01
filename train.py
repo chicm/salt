@@ -47,9 +47,9 @@ def weighted_loss(output, target, epoch=0):
     
     # four losses for: 1. grad, 2, display, 3, display 4, measurement
     if epoch < 10:
-        return focal_loss, focal_loss.item(), lovasz_loss.item(), lovasz_loss.item() + focal_loss.item() * 2
+        return focal_loss, focal_loss.item(), lovasz_loss.item(), lovasz_loss.item() + focal_loss.item()
     else:
-        return lovasz_loss + focal_loss * 2, focal_loss.item(), lovasz_loss.item(), lovasz_loss.item() + focal_loss.item() * 2
+        return lovasz_loss + focal_loss, focal_loss.item(), lovasz_loss.item(), lovasz_loss.item() + focal_loss.item()
 
 def train(args):
     print('start training...')
@@ -187,7 +187,7 @@ def validate(args, model, val_loader, epoch=0, threshold=0.5):
     #print('IOU score on validation is {:.4f}'.format(iou_score))
     #print('IOUT score on validation is {:.4f}'.format(iout_score))
 
-    return iout_score, iou_score, focal_loss / n_batches, lovaz_loss / n_batches, iout_score - w_loss
+    return iout_score, iou_score, focal_loss / n_batches, lovaz_loss / n_batches, iout_score*2 - w_loss
 
 def find_threshold(args):
     #ckp = r'G:\salt\models\152\ensemble_822\best_3.pth'
