@@ -132,7 +132,7 @@ def train(args):
             best_iout = iout
             torch.save(model.state_dict(), model_file)
             _save_ckp = '*'
-        if mix_score > best_mix_score:
+        if args.store_loss_model and mix_score > best_mix_score:
             best_mix_score = mix_score
             torch.save(model.state_dict(), model_file+'_loss')
             _save_ckp += '.'
@@ -248,6 +248,7 @@ if __name__ == '__main__':
     parser.add_argument('--exp_name', default='depths', type=str, help='exp name')
     parser.add_argument('--model_name', default='UNetResNetV4', type=str, help='')
     parser.add_argument('--val', action='store_true')
+    parser.add_argument('--store_loss_model', action='store_true')
     args = parser.parse_args()
 
     print(args)
