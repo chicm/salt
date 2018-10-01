@@ -187,7 +187,7 @@ def validate(args, model, val_loader, epoch=0, threshold=0.5):
     #print('IOU score on validation is {:.4f}'.format(iou_score))
     #print('IOUT score on validation is {:.4f}'.format(iout_score))
 
-    return iout_score, iou_score, focal_loss / n_batches, lovaz_loss / n_batches, iout_score*2 - w_loss
+    return iout_score, iou_score, focal_loss / n_batches, lovaz_loss / n_batches, iout_score*4 - w_loss
 
 def find_threshold(args):
     #ckp = r'G:\salt\models\152\ensemble_822\best_3.pth'
