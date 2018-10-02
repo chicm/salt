@@ -61,10 +61,13 @@ def train(args):
     print('start training...')
 
     model = eval(args.model_name)(args.layers, num_filters=args.nf)
+    model_subdir = args.pad_mode
+    if args.meta_version == 2:
+        model_subdir = args.pad_mode+'_meta2'
     if args.exp_name is None:
-        model_file = os.path.join(MODEL_DIR, model.name, args.pad_mode, 'best_{}.pth'.format(args.ifold))
+        model_file = os.path.join(MODEL_DIR, model.name,model_subdir, 'best_{}.pth'.format(args.ifold))
     else:
-        model_file = os.path.join(MODEL_DIR, args.exp_name, model.name, args.pad_mode, 'best_{}.pth'.format(args.ifold))
+        model_file = os.path.join(MODEL_DIR, args.exp_name, model.name, model_subdir, 'best_{}.pth'.format(args.ifold))
 
     parent_dir = os.path.dirname(model_file)
     if not os.path.exists(parent_dir):
