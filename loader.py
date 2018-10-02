@@ -57,7 +57,8 @@ class ImageDataset(data.Dataset):
             Xi, Mi = from_pil(img, mask)
             #print('>>>', Xi.shape, Mi.shape)
             #print(Mi)
-            Xi, Mi = self.augment_with_target(Xi, Mi)
+            if self.augment_with_target is not None:
+                Xi, Mi = self.augment_with_target(Xi, Mi)
             if self.image_augment is not None:
                 Xi = self.image_augment(Xi)
             Xi, Mi = to_pil(Xi, Mi)
@@ -71,7 +72,8 @@ class ImageDataset(data.Dataset):
             return Xi, Mi#torch.cat(Mi, dim=0)
         else:
             Xi = from_pil(img)
-            Xi = self.image_augment(Xi)
+            if self.image_augment is not None:
+                Xi = self.image_augment(Xi)
             Xi = to_pil(Xi)
 
             if self.image_transform is not None:
@@ -125,21 +127,42 @@ img_transforms = [
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ]
 
-def get_tta_transforms(index):
+def get_tta_transforms(index, pad_mode):
     tta_transforms = {
         0: [],
         1: [transforms.RandomHorizontalFlip(p=2.)],
         2: [transforms.RandomVerticalFlip(p=2.)],
         3: [transforms.RandomHorizontalFlip(p=2.), transforms.RandomVerticalFlip(p=2.)]
     }
-    return transforms.Compose([*(tta_transforms[index]), *img_transforms])
+    if pad_mode == 'resize':
+        return transforms.Compose([transforms.Resize((H, W)), *(tta_transforms[index]), *img_transforms])
+    else:
+        return transforms.Compose([*(tta_transforms[index]), *img_transforms])
 
-image_transform = transforms.Compose(img_transforms)
-mask_transform = transforms.Compose([transforms.Lambda(to_array),
-                                         transforms.Lambda(to_tensor),
-                                    ])
-#import pdb
-def get_train_loaders(ifold, batch_size=8, dev_mode=False, pad_mode='edge'): # reflect, edge
+def get_image_transform(pad_mode):
+    if pad_mode == 'resize':
+        return transforms.Compose([transforms.Resize((H, W)), *img_transforms])
+    else:
+        return transforms.Compose(img_transforms)
+
+def get_mask_transform(pad_mode):
+    if pad_mode == 'resize':
+        return transforms.Compose(
+            [
+                transforms.Resize((H, W)),
+                transforms.Lambda(to_array),
+                transforms.Lambda(to_tensor),
+            ]
+        )
+    else:
+        return transforms.Compose(
+            [
+                transforms.Lambda(to_array),
+                transforms.Lambda(to_tensor),
+            ]
+        )
+
+def get_train_loaders(ifold, batch_size=8, dev_mode=False, pad_mode='edge'):
     #pdb.set_trace()
     train_shuffle = True
     train_meta, val_meta = get_nfold_split(ifold, nfold=10)
@@ -150,20 +173,27 @@ def get_train_loaders(ifold, batch_size=8, dev_mode=False, pad_mode='edge'): # r
     #print(val_meta[X_COLUMN].values[:5])
     #print(val_meta[Y_COLUMN].values[:5])
 
+    if pad_mode == 'resize':
+        img_mask_aug_train = ImgAug(aug.get_affine_seq('edge'))
+        img_mask_aug_val = None
+    else:
+        img_mask_aug_train = ImgAug(aug.crop_seq(crop_size=(H, W), pad_size=(28,28), pad_method=pad_mode))
+        img_mask_aug_val = ImgAug(aug.pad_to_fit_net(64, pad_mode))
+
     train_set = ImageDataset(True, train_meta,
-                            augment_with_target=ImgAug(aug.crop_seq(crop_size=(H, W), pad_size=(28,28), pad_method=pad_mode)),
+                            augment_with_target=img_mask_aug_train,
                             image_augment=ImgAug(aug.brightness_seq),
-                            image_transform=image_transform,
-                            mask_transform=mask_transform)
+                            image_transform=get_image_transform(pad_mode),
+                            mask_transform=get_mask_transform(pad_mode))
 
     train_loader = data.DataLoader(train_set, batch_size=batch_size, shuffle=train_shuffle, num_workers=4, collate_fn=train_set.collate_fn, drop_last=True)
     train_loader.num = len(train_set)
 
     val_set = ImageDataset(True, val_meta,
-                            augment_with_target=ImgAug(aug.pad_to_fit_net(64, pad_mode)),
+                            augment_with_target=img_mask_aug_val,
                             image_augment=None, #ImgAug(aug.pad_to_fit_net(64, 'reflect')),
-                            image_transform=image_transform,
-                            mask_transform=mask_transform)
+                            image_transform=get_image_transform(pad_mode),
+                            mask_transform=get_mask_transform(pad_mode))
     val_loader = data.DataLoader(val_set, batch_size=batch_size, shuffle=False, num_workers=4, collate_fn=val_set.collate_fn)
     val_loader.num = len(val_set)
     val_loader.y_true = read_masks(val_meta[Y_COLUMN].values)
@@ -175,8 +205,8 @@ def get_test_loader(batch_size=16, index=0, dev_mode=False, pad_mode='edge'):
     if dev_mode:
         test_meta = test_meta.iloc[:10]
     test_set = ImageDataset(False, test_meta,
-                            image_augment=ImgAug(aug.pad_to_fit_net(64, pad_mode)),
-                            image_transform=get_tta_transforms(index))
+                            image_augment=None if pad_mode == 'resize' else ImgAug(aug.pad_to_fit_net(64, pad_mode)),
+                            image_transform=get_tta_transforms(index, pad_mode))
     test_loader = data.DataLoader(test_set, batch_size=batch_size, shuffle=False, num_workers=4, collate_fn=test_set.collate_fn, drop_last=False)
     test_loader.num = len(test_set)
     test_loader.meta = test_set.meta
@@ -203,7 +233,7 @@ def add_depth_channel(img_tensor):
 
 
 def test_train_loader():
-    train_loader, val_loader = get_train_loaders(0, batch_size=4, dev_mode=True)
+    train_loader, val_loader = get_train_loaders(0, batch_size=4, dev_mode=True, pad_mode='resize')
     print(train_loader.num, val_loader.num)
     for i, data in enumerate(train_loader):
         imgs, masks, salt_exists = data
@@ -215,7 +245,7 @@ def test_train_loader():
         #print(masks)
 
 def test_test_loader():
-    test_loader = get_test_loader(4)
+    test_loader = get_test_loader(4, pad_mode='resize')
     print(test_loader.num)
     for i, data in enumerate(test_loader):
         print(data.size())
@@ -223,9 +253,8 @@ def test_test_loader():
             break
 
 if __name__ == '__main__':
-    #test_test_loader()
+    test_test_loader()
     test_train_loader()
     #small_dict, img_ids = load_small_train_ids()
     #print(img_ids[:10])
-    #print(get_tta_transforms(3))
-    #add_depth_channels(None)
+    #print(get_tta_transforms(3, 'edge'))

@@ -12,11 +12,11 @@ import pdb
 import settings
 from loader import get_train_loaders, add_depth_channel
 from unet_models import UNetResNet, UNetResNetAtt, UNetResNetV3
-from unet_new import UNetResNetV4, UNetResNetV5, UNetResNetV6, UNet7
+from unet_new import UNetResNetV4, UNetResNetV5, UNetResNetV6, UNet7, UNet8
 from unet_se import UNetResNetSE
 from lovasz_losses import lovasz_hinge, lovasz_softmax
 from dice_losses import mixed_dice_bce_loss, FocalLoss2d
-from postprocessing import crop_image, binarize, crop_image_softmax
+from postprocessing import crop_image, binarize, crop_image_softmax, resize_image
 from metrics import intersection_over_union, intersection_over_union_thresholds
 
 MODEL_DIR = settings.MODEL_DIR
@@ -45,36 +45,35 @@ def weighted_loss(args, output, target, epoch=0):
     #dice_loss = mixed_dice_bce_loss(mask_output, mask_target)
     focal_loss = focal_loss2d(mask_output, mask_target)
 
-    salt_loss_value = 0.
-    if salt_output is not None:
-        salt_loss = F.binary_cross_entropy_with_logits(salt_output, salt_target)
-        salt_loss_value = salt_loss.item()
-    
-    if epoch < 10:
-        grad_loss = focal_loss
-    else:
-        grad_loss = lovasz_loss + focal_loss
+    focal_weight = 0.2
 
-    if args.train_cls and salt_output is not None:
-        grad_loss += salt_loss
+    if salt_output is not None and args.train_cls:
+        salt_loss = F.binary_cross_entropy_with_logits(salt_output, salt_target)
+        return salt_loss, focal_loss.item(), lovasz_loss.item(), salt_loss.item(), lovasz_loss.item() + focal_loss.item()*focal_weight
 
     # four losses for: 1. grad, 2, display, 3, display 4, measurement
-    return grad_loss, focal_loss.item(), lovasz_loss.item(), salt_loss_value, lovasz_loss.item() + focal_loss.item()
+    if epoch < 10:
+        return focal_loss, focal_loss.item(), lovasz_loss.item(), 0., lovasz_loss.item() + focal_loss.item()*focal_weight
+    else:
+        return lovasz_loss+focal_loss*focal_weight, focal_loss.item(), lovasz_loss.item(), 0., lovasz_loss.item() + focal_loss.item()*focal_weight
 
 def train(args):
     print('start training...')
 
     model = eval(args.model_name)(args.layers, num_filters=args.nf)
     if args.exp_name is None:
-        model_file = os.path.join(MODEL_DIR, model.name, 'best_{}.pth'.format(args.ifold))
+        model_file = os.path.join(MODEL_DIR, model.name, args.pad_mode, 'best_{}.pth'.format(args.ifold))
     else:
-        model_file = os.path.join(MODEL_DIR, args.exp_name, model.name, 'best_{}.pth'.format(args.ifold))
+        model_file = os.path.join(MODEL_DIR, args.exp_name, model.name, args.pad_mode, 'best_{}.pth'.format(args.ifold))
 
     parent_dir = os.path.dirname(model_file)
     if not os.path.exists(parent_dir):
         os.makedirs(parent_dir)
 
-    CKP = model_file
+    if args.init_ckp is not None:
+        CKP = args.init_ckp
+    else:
+        CKP = model_file
     if os.path.exists(CKP):
         print('loading {}...'.format(CKP))
         model.load_state_dict(torch.load(CKP))
@@ -196,7 +195,7 @@ def validate(args, model, val_loader, epoch=0, threshold=0.5):
     n_batches = val_loader.num // args.batch_size if val_loader.num % args.batch_size == 0 else val_loader.num // args.batch_size + 1
 
     # y_pred, list of 400 np array, each np array's shape is 101,101
-    y_pred = generate_preds_softmax(outputs, (settings.ORIG_H, settings.ORIG_W), threshold)
+    y_pred = generate_preds_softmax(args, outputs, (settings.ORIG_H, settings.ORIG_W), threshold)
 
     iou_score = intersection_over_union(val_loader.y_true, y_pred)
     iout_score = intersection_over_union_thresholds(val_loader.y_true, y_pred)
@@ -233,11 +232,15 @@ def generate_preds(outputs, target_size, threshold=0.5):
 
     return preds
 
-def generate_preds_softmax(outputs, target_size, threshold=0.5):
+def generate_preds_softmax(args, outputs, target_size, threshold=0.5):
     preds = []
 
     for output in outputs:
-        cropped = crop_image_softmax(output, target_size=target_size)
+        #print(output.shape)
+        if args.pad_mode == 'resize':
+            cropped = resize_image(output, target_size=target_size)
+        else:
+            cropped = crop_image_softmax(output, target_size=target_size)
         pred = binarize(cropped, threshold)
         preds.append(pred)
 
@@ -262,9 +265,11 @@ if __name__ == '__main__':
     parser.add_argument('--pad_mode', default='edge', choices=['reflect', 'edge'], help='pad method')
     parser.add_argument('--exp_name', default='depths', type=str, help='exp name')
     parser.add_argument('--model_name', default='UNetResNetV4', type=str, help='')
+    parser.add_argument('--init_ckp', default=None, type=str, help='resume from checkpoint path')
     parser.add_argument('--val', action='store_true')
     parser.add_argument('--store_loss_model', action='store_true')
     parser.add_argument('--train_cls', action='store_true')
+    
     args = parser.parse_args()
 
     print(args)
