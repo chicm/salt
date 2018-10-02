@@ -1,4 +1,5 @@
 import os
+import json
 import pathlib
 import random
 import sys
@@ -393,7 +394,10 @@ def get_train_split():
     meta_train_split, meta_valid_split = meta_train.iloc[train_idx], meta_train.iloc[valid_idx]
     return meta_train_split, meta_valid_split
 
-def get_nfold_split(ifold, nfold=10):
+def get_nfold_split(ifold, nfold=10, meta_version=1):
+    if meta_version == 2:
+        return get_nfold_split2(ifold, nfold)
+
     meta = pd.read_csv(settings.META_FILE)
     meta_train = meta[meta['is_train'] == 1]
 
@@ -405,6 +409,20 @@ def get_nfold_split(ifold, nfold=10):
     #print(valid_index[:10], valid_index[-10:])
 
     return meta_train.iloc[train_index], meta_train.iloc[valid_index]
+
+def get_nfold_split2(ifold, nfold=10):
+    meta_train = pd.read_csv(os.path.join(settings.DATA_DIR, 'train_meta2.csv'))
+
+    with open(os.path.join(settings.DATA_DIR, 'train_split.json'), 'r') as f:
+        train_splits = json.load(f)
+    train_index = train_splits[str(ifold)]['train_index']
+    valid_index = train_splits[str(ifold)]['val_index']
+    #print(train_index[:10], train_index[-10:])
+    #print(valid_index[:10], valid_index[-10:])
+    #print(meta_train.iloc[train_index].head())
+
+    return meta_train.iloc[train_index], meta_train.iloc[valid_index] 
+
 
 def get_test_meta():
     meta = pd.read_csv(settings.META_FILE)

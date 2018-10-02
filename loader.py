@@ -162,16 +162,17 @@ def get_mask_transform(pad_mode):
             ]
         )
 
-def get_train_loaders(ifold, batch_size=8, dev_mode=False, pad_mode='reflect'):
+def get_train_loaders(ifold, batch_size=8, dev_mode=False, pad_mode='reflect', meta_version=1):
     #pdb.set_trace()
     train_shuffle = True
-    train_meta, val_meta = get_nfold_split(ifold, nfold=10)
+    train_meta, val_meta = get_nfold_split(ifold, nfold=10, meta_version=meta_version)
     if dev_mode:
         train_shuffle = False
         train_meta = train_meta.iloc[:10]
         val_meta = val_meta.iloc[:10]
     #print(val_meta[X_COLUMN].values[:5])
     #print(val_meta[Y_COLUMN].values[:5])
+    print(train_meta.shape, val_meta.shape)
 
     if pad_mode == 'resize':
         img_mask_aug_train = ImgAug(aug.get_affine_seq('edge'))
@@ -214,7 +215,7 @@ def get_test_loader(batch_size=16, index=0, dev_mode=False, pad_mode='reflect'):
     return test_loader
 
 def test_train_loader():
-    train_loader, val_loader = get_train_loaders(0, batch_size=4, dev_mode=True, pad_mode='resize')
+    train_loader, val_loader = get_train_loaders(1, batch_size=4, dev_mode=True, pad_mode='resize', meta_version=2)
     print(train_loader.num, val_loader.num)
     for i, data in enumerate(train_loader):
         imgs, masks, salt_exists = data
@@ -233,7 +234,7 @@ def test_test_loader():
             break
 
 if __name__ == '__main__':
-    test_test_loader()
+    #test_test_loader()
     test_train_loader()
     #small_dict, img_ids = load_small_train_ids()
     #print(img_ids[:10])

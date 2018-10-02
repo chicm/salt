@@ -84,7 +84,7 @@ def train(args):
     else:
         optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=0.0001)
 
-    train_loader, val_loader = get_train_loaders(args.ifold, batch_size=args.batch_size, dev_mode=False, pad_mode=args.pad_mode)
+    train_loader, val_loader = get_train_loaders(args.ifold, batch_size=args.batch_size, dev_mode=False, pad_mode=args.pad_mode, meta_version=args.meta_version)
 
     if args.lrs == 'plateau':
         lr_scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=args.factor, patience=args.patience, min_lr=args.min_lr)
@@ -267,6 +267,7 @@ if __name__ == '__main__':
     parser.add_argument('--val', action='store_true')
     parser.add_argument('--store_loss_model', action='store_true')
     parser.add_argument('--train_cls', action='store_true')
+    parser.add_argument('--meta_version', default=1, type=int, help='meta version')
     
     args = parser.parse_args()
 
