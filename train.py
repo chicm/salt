@@ -45,21 +45,17 @@ def weighted_loss(args, output, target, epoch=0):
     #dice_loss = mixed_dice_bce_loss(mask_output, mask_target)
     focal_loss = focal_loss2d(mask_output, mask_target)
 
-    salt_loss_value = 0.
-    if salt_output is not None:
-        salt_loss = F.binary_cross_entropy_with_logits(salt_output, salt_target)
-        salt_loss_value = salt_loss.item()
-    
-    if epoch < 10:
-        grad_loss = focal_loss
-    else:
-        grad_loss = lovasz_loss + focal_loss
+    focal_weight = 0.2
 
-    if args.train_cls and salt_output is not None:
-        grad_loss += salt_loss
+    if salt_output is not None and args.train_cls:
+        salt_loss = F.binary_cross_entropy_with_logits(salt_output, salt_target)
+        return salt_loss, focal_loss.item(), lovasz_loss.item(), salt_loss.item(), lovasz_loss.item() + focal_loss.item()*focal_weight
 
     # four losses for: 1. grad, 2, display, 3, display 4, measurement
-    return grad_loss, focal_loss.item(), lovasz_loss.item(), salt_loss_value, lovasz_loss.item() + focal_loss.item()
+    if epoch < 10:
+        return focal_loss, focal_loss.item(), lovasz_loss.item(), 0., lovasz_loss.item() + focal_loss.item()*focal_weight
+    else:
+        return lovasz_loss+focal_loss*focal_weight, focal_loss.item(), lovasz_loss.item(), 0., lovasz_loss.item() + focal_loss.item()*focal_weight
 
 def train(args):
     print('start training...')
