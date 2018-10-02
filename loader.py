@@ -174,7 +174,7 @@ def get_train_loaders(ifold, batch_size=8, dev_mode=False, pad_mode='edge'):
     #print(val_meta[Y_COLUMN].values[:5])
 
     if pad_mode == 'resize':
-        img_mask_aug_train = ImgAug(aug.get_affine_seq('edge'))
+        img_mask_aug_train = ImgAug(aug.get_affine_seq_depths('edge'))
         img_mask_aug_val = None
     else:
         img_mask_aug_train = ImgAug(aug.crop_seq(crop_size=(H, W), pad_size=(28,28), pad_method=pad_mode))
@@ -213,23 +213,36 @@ def get_test_loader(batch_size=16, index=0, dev_mode=False, pad_mode='edge'):
 
     return test_loader
 
-def get_depth_tensor():
-    depth_tensor = np.zeros((ORIG_H, ORIG_W))
-    for row, const in enumerate(np.linspace(0, 1, ORIG_H)):
-        depth_tensor[row, :] = const
-    depth_tensor = np.pad(depth_tensor, (14,14), mode='edge')
-    depth_tensor = depth_tensor[:H, :W]
+depth_channel_tensor = None
 
-    return torch.Tensor(depth_tensor)
+def get_depth_tensor(pad_mode):
+    global depth_channel_tensor
 
-depth_channel_tensor = get_depth_tensor()
+    if depth_channel_tensor is not None:
+        return depth_channel_tensor
+    
+    depth_tensor = None
 
-def add_depth_channel(img_tensor):
+    if pad_mode == 'resize':
+        depth_tensor = np.zeros((H, W))
+        for row, const in enumerate(np.linspace(0, 1, H)):
+            depth_tensor[row, :] = const 
+    else:
+        depth_tensor = np.zeros((ORIG_H, ORIG_W))
+        for row, const in enumerate(np.linspace(0, 1, ORIG_H)):
+            depth_tensor[row, :] = const
+        depth_tensor = np.pad(depth_tensor, (14,14), mode=pad_mode) # edge or reflect
+        depth_tensor = depth_tensor[:H, :W]
+
+    depth_channel_tensor = torch.Tensor(depth_tensor)
+    return depth_channel_tensor
+
+def add_depth_channel(img_tensor, pad_mode):
     '''
     img_tensor: N, C, H, W
     '''
-    img_tensor[:, 1] = depth_channel_tensor
-    img_tensor[:, 2] = img_tensor[:, 0] * depth_channel_tensor
+    img_tensor[:, 1] = get_depth_tensor(pad_mode)
+    img_tensor[:, 2] = img_tensor[:, 0] * get_depth_tensor(pad_mode)
 
 
 def test_train_loader():
@@ -240,7 +253,7 @@ def test_train_loader():
         #pdb.set_trace()
         print(imgs.size(), masks.size(), salt_exists.size())
         print(salt_exists)
-        add_depth_channel(imgs)
+        add_depth_channel(imgs, 'resize')
         #print(imgs)
         #print(masks)
 
