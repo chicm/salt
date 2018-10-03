@@ -100,7 +100,7 @@ def ensemble_np(args, np_files):
     meta = get_test_loader(args.batch_size, index=0, dev_mode=False, pad_mode=args.pad_mode).meta
 
     submission = create_submission(meta, y_pred_test)
-    submission_filepath = 'ensemble_depths_res50_34_8model_tta2_1.csv'
+    submission_filepath = 'v4_1378.csv'
     submission.to_csv(submission_filepath, index=None, encoding='utf-8')
 
 def generate_preds_softmax(outputs, target_size, pad_mode, threshold=0.5):
@@ -132,10 +132,10 @@ def ensemble_predict(args):
     
     # LB861
     #checkpoints = [
-    #    r'D:\data\salt\models\depths\UNetResNetV4_34\best_0.pth', 
-    #    r'D:\data\salt\models\depths\UNetResNetV4_34\best_1.pth',
-    #    r'D:\data\salt\models\depths\UNetResNetV4_34\best_2.pth',
-    #    r'D:\data\salt\models\depths\UNetResNetV4_34\best_3.pth'
+    #    r'D:\data\salt\models\depths\UNetResNetV4_34\edge\best_0.pth', 
+    #    r'D:\data\salt\models\depths\UNetResNetV4_34\edge\best_1.pth',
+    #    r'D:\data\salt\models\depths\UNetResNetV4_34\edge\best_2.pth',
+    #    r'D:\data\salt\models\depths\UNetResNetV4_34\edge\best_3.pth'
     #]
 
     checkpoints= glob.glob(r'G:\salt\models\depths\UNet8_34_nf32\resize\best*.pth')
@@ -144,10 +144,11 @@ def ensemble_predict(args):
 
     ensemble(args, model, checkpoints)
 
-def ensemble_np_results():
-    np_files1 = glob.glob(r'D:\data\salt\models\depths\UNetResNetV5_50\*pth_out\*.npy')
-    np_files2 = glob.glob(r'D:\data\salt\models\depths\UNetResNetV4_34\*pth_out\*.npy')
-    np_files = np_files1+np_files2
+def ensemble_np_results(args):
+    #np_files1 = glob.glob(r'D:\data\salt\models\depths\UNetResNetV5_50\*pth_out\*.npy')
+    #np_files2 = glob.glob(r'D:\data\salt\models\depths\UNetResNetV4_34\*pth_out\*.npy')
+    #np_files = np_files1+np_files2
+    np_files = glob.glob(r'D:\data\salt\models\depths\UNetResNetV4_34\edge\best*test\*.npy')
     print(np_files)
     ensemble_np(args, np_files)
 
@@ -185,4 +186,5 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     #predict_model(args)
-    ensemble_predict(args)
+    #ensemble_predict(args)
+    ensemble_np_results(args)
