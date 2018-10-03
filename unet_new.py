@@ -321,32 +321,6 @@ class UNetResNetV5(nn.Module):
         f = F.dropout2d(f, p=self.dropout_2d)
 
         return self.logit(f), None
-    
-    def freeze_bn(self):
-        '''Freeze BatchNorm layers.'''
-        for layer in self.modules():
-            if isinstance(layer, nn.BatchNorm2d):
-                layer.eval()
-
-    def get_params(self, base_lr):
-        group1 = [self.encoder1, self.encoder2, self.encoder3, self.encoder4, self.encoder5]
-        group2 = [self.decoder1, self.decoder2, self.decoder3, self.decoder4, self.decoder5, self.center, self.logit]
-
-        params1 = []
-        for x in group1:
-            for p in x.parameters():
-                params1.append(p)
-        
-        param_group1 = {'params': params1, 'lr': base_lr / 5}
-
-        params2 = []
-        for x in group2:
-            for p in x.parameters():
-                params2.append(p)
-        param_group2 = {'params': params2, 'lr': base_lr}
-
-        return [param_group1, param_group2]
-
 
 class UNetResNetV6(nn.Module):
     '''
@@ -431,36 +405,207 @@ class UNetResNetV6(nn.Module):
         img_logit = self.logit_image(img_f).view(-1)
 
         return self.logit(f), img_logit
-    
-    def freeze_bn(self):
-        '''Freeze BatchNorm layers.'''
-        for layer in self.modules():
-            if isinstance(layer, nn.BatchNorm2d):
-                layer.eval()
 
-    def get_params(self, base_lr):
-        group1 = [self.encoder1, self.encoder2, self.encoder3, self.encoder4, self.encoder5]
-        group2 = [self.decoder2, self.decoder3, self.decoder4, self.decoder5, self.center, self.logit]
 
-        params1 = []
-        for x in group1:
-            for p in x.parameters():
-                params1.append(p)
-        
-        param_group1 = {'params': params1, 'lr': base_lr / 5}
+class DecoderBlockV7(nn.Module):
+    def __init__(self, in_channels_x, in_channels_e, middle_channels, out_channels):
+        super(DecoderBlockV7, self).__init__()
+        self.in_channels = in_channels_x + in_channels_e
+        self.conv1 = ConvBn2d(self.in_channels, middle_channels)
+        self.conv2 = ConvBn2d(middle_channels, out_channels)
+        self.deconv = nn.ConvTranspose2d(in_channels_x, in_channels_x, kernel_size=4, stride=2, padding=1)
+        self.bn = nn.BatchNorm2d(self.in_channels)
+        self.spatial_gate = SpatialAttentionGate(out_channels)
+        self.channel_gate = ChannelAttentionGate(out_channels)
 
-        params2 = []
-        for x in group2:
-            for p in x.parameters():
-                params2.append(p)
-        param_group2 = {'params': params2, 'lr': base_lr}
+    def forward(self, x, e=None, upsample=True):
+        #x = F.upsample(x, scale_factor=2, mode='bilinear', align_corners=True)
+        if upsample:
+            x = self.deconv(x)
+        if e is not None:
+            x = torch.cat([x,e], 1)
+        x = self.bn(x)
 
-        return [param_group1, param_group2]
+        x = F.relu(self.conv1(x), inplace=True)
+        x = F.relu(self.conv2(x), inplace=True)
+
+        g1 = self.spatial_gate(x)
+        g2 = self.channel_gate(x)
+        x = x*g1 + x*g2
+
+        return x
+
+class UNet7(nn.Module):
+    def __init__(self, encoder_depth, num_classes=1, num_filters=32, dropout_2d=0.5):
+        super(UNet7, self).__init__()
+        nf = num_filters
+        self.name = 'UNet7_'+str(encoder_depth)+'_nf'+str(nf)
+        self.num_classes = num_classes
+        self.dropout_2d = dropout_2d
+
+        self.resnet, nbtm = create_resnet(encoder_depth)
+
+        self.encoder1 = EncoderBlock(
+            nn.Sequential(
+                nn.Conv2d(3, 64, kernel_size=7, stride=1, padding=3, bias=False),
+                nn.BatchNorm2d(64),
+                nn.ReLU(inplace=True),
+            ),
+            64
+        )
+        self.encoder2 = EncoderBlock(
+            nn.Sequential(
+                nn.MaxPool2d(kernel_size=2, stride=2),
+                self.resnet.layer1,
+            ),
+            nbtm//8
+        )
+        self.encoder3 = EncoderBlock(self.resnet.layer2, nbtm//4)
+        self.encoder4 = EncoderBlock(self.resnet.layer3, nbtm//2)
+        self.encoder5 = EncoderBlock(self.resnet.layer4, nbtm)
+
+        center_block = nn.Sequential(
+            ConvBn2d(nbtm, nbtm, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            ConvBn2d(nbtm, nbtm//2, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            #nn.MaxPool2d(kernel_size=2, stride=2) # remove
+        )
+        self.center = EncoderBlock(center_block, nbtm//2)
+
+        self.decoder5 = DecoderBlockV7(nbtm // 2, nbtm,  nf * 16, nf*2)
+        self.decoder4 = DecoderBlockV7(nf*2, nbtm // 2,  nf * 8,  nf*2)
+        self.decoder3 = DecoderBlockV7(nf*2, nbtm // 4,  nf * 4,  nf*2)
+        self.decoder2 = DecoderBlockV7(nf*2, nbtm // 8,  nf * 2,  nf*2)
+        self.decoder1 = DecoderBlockV7(nf*2, 64, nf*2, nf*2)
+
+        self.logit = nn.Sequential(
+            nn.Conv2d(nf*10, 64, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(64, 1, kernel_size=1, padding=0)
+        )
+
+        self.logit_image = nn.Sequential(
+            nn.Linear(nbtm, 128),
+            nn.ReLU(inplace=True),
+            nn.Linear(128, 1),
+        )
+
+    def forward(self, x):
+        e1 = self.encoder1(x) #; print('e1:', e1.size())
+        e2 = self.encoder2(e1) #; print('e2:', e2.size())
+        e3 = self.encoder3(e2) #; print('e3:', e3.size())
+        e4 = self.encoder4(e3) #; print('e4:', e4.size())
+        e5 = self.encoder5(e4) #; print('e5:', e5.size())
+
+        center = self.center(e5) #; print('center:', center.size())
+
+        d5 = self.decoder5(center, e5, upsample=False) #; print('d5:', d5.size())
+        d4 = self.decoder4(d5, e4) #; print('d4:', d4.size())
+        d3 = self.decoder3(d4, e3) #; print('d3:', d3.size())
+        d2 = self.decoder2(d3, e2) #; print('d2:', d2.size())
+        d1 = self.decoder1(d2, e1) #; print('d1:', d1.size())
+
+        f = torch.cat([
+            d1,
+            F.interpolate(d2, scale_factor=2, mode='bilinear', align_corners=False),
+            F.interpolate(d3, scale_factor=4, mode='bilinear', align_corners=False),
+            F.interpolate(d4, scale_factor=8, mode='bilinear', align_corners=False),
+            F.interpolate(d5, scale_factor=16, mode='bilinear', align_corners=False),
+        ], 1)
+
+        f = F.dropout2d(f, p=self.dropout_2d)
+
+        # empty mask classifier
+        img_f = F.adaptive_avg_pool2d(e5, 1).view(x.size(0), -1)
+        img_f = F.dropout(img_f, p=0.5, training=self.training)
+        img_logit = self.logit_image(img_f).view(-1)
+
+        return self.logit(f), img_logit
+
+
+class UNet8(nn.Module):
+    def __init__(self, encoder_depth, num_classes=1, num_filters=32, dropout_2d=0.5):
+        super(UNet8, self).__init__()
+        nf = num_filters
+        self.name = 'UNet8_'+str(encoder_depth)+'_nf'+str(nf)
+        self.num_classes = num_classes
+        self.dropout_2d = dropout_2d
+
+        self.resnet, nbtm = create_resnet(encoder_depth)
+
+        self.encoder1 = EncoderBlock(
+            nn.Sequential(self.resnet.conv1, self.resnet.bn1, self.resnet.relu),
+            64
+        )
+
+        self.encoder2 = EncoderBlock(self.resnet.layer1, nbtm//8)
+        self.encoder3 = EncoderBlock(self.resnet.layer2, nbtm//4)
+        self.encoder4 = EncoderBlock(self.resnet.layer3, nbtm//2)
+        self.encoder5 = EncoderBlock(self.resnet.layer4, nbtm)
+
+        center_block = nn.Sequential(
+            ConvBn2d(nbtm, nbtm, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            ConvBn2d(nbtm, nbtm//2, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            #nn.MaxPool2d(kernel_size=2, stride=2) # remove
+        )
+        self.center = EncoderBlock(center_block, nbtm//2)
+
+        self.decoder5 = DecoderBlockV7(nbtm // 2, nbtm,  nf * 16, nf*2)
+        self.decoder4 = DecoderBlockV7(nf*2, nbtm // 2,  nf * 8,  nf*2)
+        self.decoder3 = DecoderBlockV7(nf*2, nbtm // 4,  nf * 4,  nf*2)
+        self.decoder2 = DecoderBlockV7(nf*2, nbtm // 8,  nf * 2,  nf*2)
+        self.decoder1 = DecoderBlockV7(nf*2+64, 3, nf*2, nf*2)
+
+        self.logit = nn.Sequential(
+            nn.Conv2d(nf*10, 64, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(64, 1, kernel_size=1, padding=0)
+        )
+
+        self.logit_image = nn.Sequential(
+            nn.Linear(nbtm, 128),
+            nn.ReLU(inplace=True),
+            nn.Linear(128, 1),
+        )
+
+    def forward(self, x):
+        e1 = self.encoder1(x) #; print('e1:', e1.size())
+        e2 = self.encoder2(e1) #; print('e2:', e2.size())
+        e3 = self.encoder3(e2) #; print('e3:', e3.size())
+        e4 = self.encoder4(e3) #; print('e4:', e4.size())
+        e5 = self.encoder5(e4) #; print('e5:', e5.size())
+
+        center = self.center(e5) #; print('center:', center.size())
+
+        d5 = self.decoder5(center, e5, upsample=False) #; print('d5:', d5.size())
+        d4 = self.decoder4(d5, e4) #; print('d4:', d4.size())
+        d3 = self.decoder3(d4, e3) #; print('d3:', d3.size())
+        d2 = self.decoder2(d3, e2) #; print('d2:', d2.size())
+        d1 = self.decoder1(torch.cat([d2, e1], 1), x) #; print('d1:', d1.size())
+
+        f = torch.cat([
+            d1,
+            F.interpolate(d2, scale_factor=2, mode='bilinear', align_corners=False),
+            F.interpolate(d3, scale_factor=4, mode='bilinear', align_corners=False),
+            F.interpolate(d4, scale_factor=8, mode='bilinear', align_corners=False),
+            F.interpolate(d5, scale_factor=16, mode='bilinear', align_corners=False),
+        ], 1)
+
+        f = F.dropout2d(f, p=self.dropout_2d)
+
+        # empty mask classifier
+        img_f = F.adaptive_avg_pool2d(e5, 1).view(x.size(0), -1)
+        img_f = F.dropout(img_f, p=0.5, training=self.training)
+        img_logit = self.logit_image(img_f).view(-1)
+
+        return self.logit(f), img_logit
 
 
 def test():
-    model = UNetResNetV6(34).cuda()
-    model.freeze_bn()
+    model = UNet8(50, num_filters=32).cuda()
     inputs = torch.randn(2,3,128,128).cuda()
     out, _ = model(inputs)
     #print(model)

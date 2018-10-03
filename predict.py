@@ -1,5 +1,6 @@
 import os
 import glob
+import argparse
 import numpy as np
 import torch
 import torch.optim as optim
@@ -8,14 +9,12 @@ import torch.nn.functional as F
 import settings
 from loader import get_test_loader #, add_depth_channel
 from unet_models import UNetResNet
-from unet_new import UNetResNetV4
-from postprocessing import crop_image, binarize, crop_image_softmax
+from unet_new import UNetResNetV4, UNetResNetV5, UNetResNetV6, UNet7, UNet8
+from postprocessing import crop_image, binarize, crop_image_softmax, resize_image
 from metrics import intersection_over_union, intersection_over_union_thresholds
 from utils import create_submission
 
-batch_size = 64
-
-def do_tta_predict(model, ckp_path, tta_num=4):
+def do_tta_predict(args, model, ckp_path, tta_num=4):
     '''
     return 18000x128x128 np array
     '''
@@ -26,7 +25,7 @@ def do_tta_predict(model, ckp_path, tta_num=4):
     # i is tta index, 0: no change, 1: horizon flip, 2: vertical flip, 3: do both
     for flip_index in range(tta_num):
         print('flip_index:', flip_index)
-        test_loader = get_test_loader(batch_size, index=flip_index, dev_mode=False)
+        test_loader = get_test_loader(args.batch_size, index=flip_index, dev_mode=False, pad_mode=args.pad_mode)
         meta = test_loader.meta
         outputs = None
         with torch.no_grad():
@@ -40,7 +39,7 @@ def do_tta_predict(model, ckp_path, tta_num=4):
                 else:
                     outputs = torch.cat([outputs, output.squeeze()], 0)
 
-                print('{} / {}'.format(batch_size*(i+1), test_loader.num), end='\r')
+                print('{} / {}'.format(args.batch_size*(i+1), test_loader.num), end='\r')
         outputs = outputs.cpu().numpy()
         # flip back masks
         if flip_index == 1:
@@ -63,25 +62,17 @@ def do_tta_predict(model, ckp_path, tta_num=4):
 
     return model_pred_result, meta
 
-def predict():
-    model = UNetResNet(152, pretrained=True, is_deconv=True)
-    CKP = os.path.join(settings.MODEL_DIR, '152_new', 'best_0.pth')
-    print('loading...', CKP)
-    model.load_state_dict(torch.load(CKP))
-    model = model.cuda()
-
-    pred, meta = do_tta_predict(model, CKP)
+def predict(args, model, checkpoint, out_file):
+    print('predicting {}...'.format(checkpoint))
+    pred, meta = do_tta_predict(args, model, checkpoint, tta_num=2)
     print(pred.shape)
-    y_pred_test = generate_preds_softmax(pred, (settings.ORIG_H, settings.ORIG_W))
+    y_pred_test = generate_preds_softmax(pred, (settings.ORIG_H, settings.ORIG_W), pad_mode=args.pad_mode)
 
     submission = create_submission(meta, y_pred_test)
-    submission_filepath = 'sub_tta_1.csv'
-    submission.to_csv(submission_filepath, index=None, encoding='utf-8')
+    submission.to_csv(out_file, index=None, encoding='utf-8')
 
 
-def ensemble(checkpoints):
-    model = UNetResNetV4(34)
-
+def ensemble(args, model, checkpoints):
     preds = []
     meta = None
     for checkpoint in checkpoints:
@@ -92,49 +83,44 @@ def ensemble(checkpoints):
         pred, meta = do_tta_predict(model, checkpoint, tta_num=2)
         preds.append(pred)
 
-    y_pred_test = generate_preds_softmax(np.mean(preds, 0), (settings.ORIG_H, settings.ORIG_W))
+    y_pred_test = generate_preds_softmax(np.mean(preds, 0), (settings.ORIG_H, settings.ORIG_W), args.pad_mode)
 
     submission = create_submission(meta, y_pred_test)
-    submission_filepath = 'ensemble_depths_res34_0123_tta2_1.csv'
-    submission.to_csv(submission_filepath, index=None, encoding='utf-8')
+    submission.to_csv(args.sub_file, index=None, encoding='utf-8')
 
-def ensemble_np(np_files):
+def ensemble_np(args, np_files):
     preds = []
     for np_file in np_files:
         pred = np.load(np_file)
         print(np_file, pred.shape)
         preds.append(pred)
 
-    y_pred_test = generate_preds_softmax(np.mean(preds, 0), (settings.ORIG_H, settings.ORIG_W))
+    y_pred_test = generate_preds_softmax(np.mean(preds, 0), (settings.ORIG_H, settings.ORIG_W), args.pad_mode)
 
-    meta = get_test_loader(batch_size, index=0, dev_mode=False).meta
+    meta = get_test_loader(args.batch_size, index=0, dev_mode=False, pad_mode=args.pad_mode).meta
 
     submission = create_submission(meta, y_pred_test)
-    submission_filepath = 'ensemble_depths_res34_single1_tta2_1.csv'
+    submission_filepath = 'ensemble_depths_res50_34_8model_tta2_1.csv'
     submission.to_csv(submission_filepath, index=None, encoding='utf-8')
 
-
-def generate_preds(outputs, target_size):
+def generate_preds_softmax(outputs, target_size, pad_mode, threshold=0.5):
     preds = []
 
     for output in outputs:
-        cropped = crop_image(output, target_size=target_size)
-        pred = binarize(cropped, 0.5)
-        preds.append(pred)
-
-    return preds
-
-def generate_preds_softmax(outputs, target_size, threshold=0.5):
-    preds = []
-
-    for output in outputs:
-        cropped = crop_image_softmax(output, target_size=target_size)
+        #print(output.shape)
+        if pad_mode == 'resize':
+            cropped = resize_image(output, target_size=target_size)
+        else:
+            cropped = crop_image_softmax(output, target_size=target_size)
         pred = binarize(cropped, threshold)
         preds.append(pred)
 
     return preds
 
-if __name__ == '__main__':
+
+def ensemble_predict(args):
+    model = eval(args.model_name)(args.layers, num_filters=args.nf)
+    
     #checkpoints = [
     #    r'G:\salt\models\152_new\best_0.pth', r'G:\salt\models\152_new\best_1.pth',
     #    r'G:\salt\models\152_new\best_2.pth'
@@ -152,9 +138,51 @@ if __name__ == '__main__':
     #    r'D:\data\salt\models\depths\UNetResNetV4_34\best_3.pth'
     #]
 
-    #checkpoints= glob.glob(r'D:\data\salt\models\depths\UNetResNetV4_34\*.pth')
-    #print(checkpoints)
+    checkpoints= glob.glob(r'G:\salt\models\depths\UNet8_34_nf32\resize\best*.pth')
+    print(checkpoints)
     #ensemble(checkpoints)
 
-    np_files = glob.glob(r'D:\data\salt\models\depths\UNetResNetV4_34\*out\*.npy')
-    ensemble_np(np_files)
+    ensemble(args, model, checkpoints)
+
+def ensemble_np_results():
+    np_files1 = glob.glob(r'D:\data\salt\models\depths\UNetResNetV5_50\*pth_out\*.npy')
+    np_files2 = glob.glob(r'D:\data\salt\models\depths\UNetResNetV4_34\*pth_out\*.npy')
+    np_files = np_files1+np_files2
+    print(np_files)
+    ensemble_np(args, np_files)
+
+def predict_model(args):
+    model = eval(args.model_name)(args.layers, num_filters=args.nf)
+    model_subdir = args.pad_mode
+    if args.meta_version == 2:
+        model_subdir = args.pad_mode+'_meta2'
+    if args.exp_name is None:
+        model_file = os.path.join(settings.MODEL_DIR, model.name,model_subdir, 'best_{}.pth'.format(args.ifold))
+    else:
+        model_file = os.path.join(settings.MODEL_DIR, args.exp_name, model.name, model_subdir, 'best_{}.pth'.format(args.ifold))
+
+    if os.path.exists(model_file):
+        print('loading {}...'.format(model_file))
+        model.load_state_dict(torch.load(model_file))
+    else:
+        raise ValueError('model file not found: {}'.format(model_file))
+    model = model.cuda()
+    predict(args, model, model_file, args.sub_file)
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Salt segmentation')
+    parser.add_argument('--model_name', required=True, type=str, help='')
+    parser.add_argument('--layers', default=34, type=int, help='model layers')
+    parser.add_argument('--nf', default=32, type=int, help='num_filters param for model')
+    parser.add_argument('--ifold', required=True, type=int, help='kfold indices')
+    parser.add_argument('--batch_size', default=32, type=int, help='batch_size')
+    parser.add_argument('--pad_mode', required=True, choices=['reflect', 'edge', 'resize'], help='pad method')
+    parser.add_argument('--exp_name', default='depths', type=str, help='exp name')
+    parser.add_argument('--meta_version', default=1, type=int, help='meta version')
+    parser.add_argument('--sub_file', default='UNet8_resize_ensemble_1.csv', type=str, help='submission file')
+
+    args = parser.parse_args()
+
+    #predict_model(args)
+    ensemble_predict(args)
