@@ -2,7 +2,7 @@ import os
 import argparse
 import logging as log
 import time
-
+import nni
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -157,6 +157,7 @@ def train(args):
         log.info('epoch {}: train loss: {:.4f} focal loss: {:.4f} lovaz loss: {:.4f} iout: {:.4f} best iout: {:.4f} iou: {:.4f} lr: {} {}'
             .format(epoch, train_loss, focal_loss, lovaz_loss, iout, best_iout, iou, current_lr, _save_ckp))
 
+        nni.report_intermediate_result(iout)
         model.train()
         
         if args.lrs == 'plateau':

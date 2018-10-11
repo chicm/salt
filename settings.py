@@ -1,7 +1,8 @@
 import os
 
-DATA_DIR = r'D:\data\salt'
-
+#DATA_DIR = r'D:\data\salt'
+#DATA_DIR = r'/mnt/chicm/data/salt'
+DATA_DIR = r'/root/data/salt'
 TRAIN_DIR = os.path.join(DATA_DIR, 'train')
 TEST_DIR = os.path.join(DATA_DIR, 'test')
 

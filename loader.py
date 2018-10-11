@@ -187,7 +187,7 @@ def get_train_loaders(ifold, batch_size=8, dev_mode=False, pad_mode='edge', meta
                             image_transform=get_image_transform(pad_mode),
                             mask_transform=get_mask_transform(pad_mode))
 
-    train_loader = data.DataLoader(train_set, batch_size=batch_size, shuffle=train_shuffle, num_workers=4, collate_fn=train_set.collate_fn, drop_last=True)
+    train_loader = data.DataLoader(train_set, batch_size=batch_size, shuffle=train_shuffle, num_workers=0, collate_fn=train_set.collate_fn, drop_last=True)
     train_loader.num = len(train_set)
 
     val_set = ImageDataset(True, val_meta,
@@ -195,7 +195,7 @@ def get_train_loaders(ifold, batch_size=8, dev_mode=False, pad_mode='edge', meta
                             image_augment=None, #ImgAug(aug.pad_to_fit_net(64, 'reflect')),
                             image_transform=get_image_transform(pad_mode),
                             mask_transform=get_mask_transform(pad_mode))
-    val_loader = data.DataLoader(val_set, batch_size=batch_size, shuffle=False, num_workers=4, collate_fn=val_set.collate_fn)
+    val_loader = data.DataLoader(val_set, batch_size=batch_size, shuffle=False, num_workers=0, collate_fn=val_set.collate_fn)
     val_loader.num = len(val_set)
     val_loader.y_true = read_masks(val_meta[Y_COLUMN].values)
 
@@ -208,7 +208,7 @@ def get_test_loader(batch_size=16, index=0, dev_mode=False, pad_mode='edge'):
     test_set = ImageDataset(False, test_meta,
                             image_augment=None if pad_mode == 'resize' else ImgAug(aug.pad_to_fit_net(64, pad_mode)),
                             image_transform=get_tta_transforms(index, pad_mode))
-    test_loader = data.DataLoader(test_set, batch_size=batch_size, shuffle=False, num_workers=4, collate_fn=test_set.collate_fn, drop_last=False)
+    test_loader = data.DataLoader(test_set, batch_size=batch_size, shuffle=False, num_workers=0, collate_fn=test_set.collate_fn, drop_last=False)
     test_loader.num = len(test_set)
     test_loader.meta = test_set.meta
 
