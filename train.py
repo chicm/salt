@@ -52,7 +52,7 @@ def weighted_loss(args, output, target, epoch=0):
         return salt_loss, focal_loss.item(), lovasz_loss.item(), salt_loss.item(), lovasz_loss.item() + focal_loss.item()*focal_weight
 
     # four losses for: 1. grad, 2, display, 3, display 4, measurement
-    if epoch < 10:
+    if epoch < 0:
         return focal_loss, focal_loss.item(), lovasz_loss.item(), 0., lovasz_loss.item() + focal_loss.item()*focal_weight
     else:
         return lovasz_loss+focal_loss*focal_weight, focal_loss.item(), lovasz_loss.item(), 0., lovasz_loss.item() + focal_loss.item()*focal_weight
