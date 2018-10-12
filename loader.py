@@ -25,6 +25,7 @@ class ImageDataset(data.Dataset):
         self.img_ids = meta[ID_COLUMN].values
         self.img_filenames = meta[X_COLUMN].values
         self.salt_exists = meta['salt_exists'].values
+        self.is_train = meta['is_train'].values
         
         if self.train_mode:
             self.mask_filenames = meta[Y_COLUMN].values
@@ -36,15 +37,19 @@ class ImageDataset(data.Dataset):
 
     def __getitem__(self, index):
         base_img_fn = self.img_filenames[index].split('\\')[-1]
-        if self.train_mode:
+        if self.is_train[index]: #self.train_mode:
             img_fn = os.path.join(TRAIN_IMG_DIR, base_img_fn)
         else:
             img_fn = os.path.join(TEST_IMG_DIR, base_img_fn)
         img = self.load_image(img_fn)
 
         if self.train_mode:
-            base_mask_fn = self.mask_filenames[index].split('\\')[-1]
-            mask_fn = os.path.join(TRAIN_MASK_DIR, base_mask_fn)
+            #base_mask_fn = self.mask_filenames[index].split('\\')[-1]
+            base_mask_fn = '{}.png'.format(self.img_ids[index])
+            if self.is_train[index]:
+                mask_fn = os.path.join(TRAIN_MASK_DIR, base_mask_fn)
+            else:
+                mask_fn = os.path.join(TEST_DIR, 'masks', base_mask_fn)
             mask = self.load_image(mask_fn, True)
             img, mask = self.aug_image(img, mask)
             return img, mask, self.salt_exists[index]
@@ -162,10 +167,15 @@ def get_mask_transform(pad_mode):
             ]
         )
 
-def get_train_loaders(ifold, batch_size=8, dev_mode=False, pad_mode='edge', meta_version=1):
+def get_train_loaders(ifold, batch_size=8, dev_mode=False, pad_mode='edge', meta_version=1, pseudo_label=False):
     #pdb.set_trace()
     train_shuffle = True
     train_meta, val_meta = get_nfold_split(ifold, nfold=10, meta_version=meta_version)
+
+    if pseudo_label:
+        test_meta = get_test_meta()
+        train_meta = train_meta.append(test_meta, sort=True)
+
     if dev_mode:
         train_shuffle = False
         train_meta = train_meta.iloc[:10]
@@ -247,7 +257,7 @@ def add_depth_channel(img_tensor, pad_mode):
 
 
 def test_train_loader():
-    train_loader, val_loader = get_train_loaders(1, batch_size=4, dev_mode=True, pad_mode='resize', meta_version=2)
+    train_loader, val_loader = get_train_loaders(1, batch_size=4, dev_mode=False, pad_mode='resize', meta_version=2, pseudo_label=True)
     print(train_loader.num, val_loader.num)
     for i, data in enumerate(train_loader):
         imgs, masks, salt_exists = data
@@ -255,6 +265,7 @@ def test_train_loader():
         print(imgs.size(), masks.size(), salt_exists.size())
         print(salt_exists)
         add_depth_channel(imgs, 'resize')
+        break
         #print(imgs)
         #print(masks)
 

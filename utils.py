@@ -120,7 +120,7 @@ def run_length_decoding(mask_rle, shape):
     ends = starts + lengths
     img = np.zeros(shape[1] * shape[0], dtype=np.uint8)
     for lo, hi in zip(starts, ends):
-        img[lo:hi] = 1
+        img[lo:hi] = 255
     return img.reshape((shape[1], shape[0])).T
 
 def get_salt_existence():
@@ -383,8 +383,9 @@ class KFoldBySortedValue(BaseCrossValidator):
         return self.n_splits
 
 def get_train_split():
-    meta = pd.read_csv(settings.META_FILE)
+    meta = pd.read_csv(settings.META_FILE, na_filter=False)
     meta_train = meta[meta['is_train'] == 1]
+    print(meta.head())
 
     cv = KFoldBySortedValue()
     for train_idx, valid_idx in cv.split(meta_train[settings.DEPTH_COLUMN].values.reshape(-1)):
@@ -398,7 +399,7 @@ def get_nfold_split(ifold, nfold=10, meta_version=1):
     if meta_version == 2:
         return get_nfold_split2(ifold, nfold)
 
-    meta = pd.read_csv(settings.META_FILE)
+    meta = pd.read_csv(settings.META_FILE, na_filter=False)
     meta_train = meta[meta['is_train'] == 1]
 
     kf = KFold(n_splits=nfold)
@@ -425,7 +426,7 @@ def get_nfold_split2(ifold, nfold=10):
 
 
 def get_test_meta():
-    meta = pd.read_csv(settings.META_FILE)
+    meta = pd.read_csv(settings.META_FILE, na_filter=False)
     test_meta = meta[meta['is_train'] == 0]
     print(len(test_meta.values))
     return test_meta

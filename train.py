@@ -87,7 +87,7 @@ def train(args):
     else:
         optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=0.0001)
 
-    train_loader, val_loader = get_train_loaders(args.ifold, batch_size=args.batch_size, dev_mode=False, pad_mode=args.pad_mode, meta_version=args.meta_version)
+    train_loader, val_loader = get_train_loaders(args.ifold, batch_size=args.batch_size, dev_mode=False, pad_mode=args.pad_mode, meta_version=args.meta_version, pseudo_label=args.pseudo)
 
     if args.lrs == 'plateau':
         lr_scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=args.factor, patience=args.patience, min_lr=args.min_lr)
@@ -254,8 +254,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Salt segmentation')
     parser.add_argument('--layers', default=34, type=int, help='model layers')
     parser.add_argument('--nf', default=32, type=int, help='num_filters param for model')
-    parser.add_argument('--lr', default=0.002, type=float, help='learning rate')
-    parser.add_argument('--min_lr', default=0.0002, type=float, help='min learning rate')
+    parser.add_argument('--lr', default=0.001, type=float, help='learning rate')
+    parser.add_argument('--min_lr', default=0.0001, type=float, help='min learning rate')
     parser.add_argument('--ifolds', default='0', type=str, help='kfold indices')
     parser.add_argument('--batch_size', default=32, type=int, help='batch_size')
     parser.add_argument('--start_epoch', default=0, type=int, help='start epoch')
@@ -264,7 +264,7 @@ if __name__ == '__main__':
     parser.add_argument('--lrs', default='cosine', choices=['cosine', 'plateau'], help='LR sceduler')
     parser.add_argument('--patience', default=6, type=int, help='lr scheduler patience')
     parser.add_argument('--factor', default=0.5, type=float, help='lr scheduler factor')
-    parser.add_argument('--t_max', default=8, type=int, help='lr scheduler patience')
+    parser.add_argument('--t_max', default=15, type=int, help='lr scheduler patience')
     parser.add_argument('--pad_mode', default='edge', choices=['reflect', 'edge', 'resize'], help='pad method')
     parser.add_argument('--exp_name', default='depths', type=str, help='exp name')
     parser.add_argument('--model_name', default='UNetResNetV4', type=str, help='')
@@ -273,6 +273,7 @@ if __name__ == '__main__':
     parser.add_argument('--store_loss_model', action='store_true')
     parser.add_argument('--train_cls', action='store_true')
     parser.add_argument('--meta_version', default=1, type=int, help='meta version')
+    parser.add_argument('--pseudo', action='store_true')
     
     args = parser.parse_args()
 
