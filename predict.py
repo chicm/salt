@@ -100,8 +100,8 @@ def ensemble_np(args, np_files):
     meta = get_test_loader(args.batch_size, index=0, dev_mode=False, pad_mode=args.pad_mode).meta
 
     submission = create_submission(meta, y_pred_test)
-    submission_filepath = 'v4_1378.csv'
-    submission.to_csv(submission_filepath, index=None, encoding='utf-8')
+    #submission_filepath = 'v4_1378.csv'
+    submission.to_csv(args.sub_file, index=None, encoding='utf-8')
 
 def generate_preds_softmax(outputs, target_size, pad_mode, threshold=0.5):
     preds = []
@@ -138,17 +138,18 @@ def ensemble_predict(args):
     #    r'D:\data\salt\models\depths\UNetResNetV4_34\edge\best_3.pth'
     #]
 
-    checkpoints= glob.glob(r'G:\salt\models\depths\UNet8_34_nf32\resize\best*.pth')
+    checkpoints= glob.glob(r'D:\data\salt\models\depths\UNetResNetV4_34\edge\best*.pth')
     print(checkpoints)
     #ensemble(checkpoints)
 
     ensemble(args, model, checkpoints)
 
 def ensemble_np_results(args):
-    #np_files1 = glob.glob(r'D:\data\salt\models\depths\UNetResNetV5_50\*pth_out\*.npy')
-    #np_files2 = glob.glob(r'D:\data\salt\models\depths\UNetResNetV4_34\*pth_out\*.npy')
-    #np_files = np_files1+np_files2
-    np_files = glob.glob(r'D:\data\salt\models\depths\UNetResNetV4_34\edge\best*test\*.npy')
+    np_files1 = glob.glob(r'D:\data\salt\models\depths\UNetResNetV5_50\edge\*pth_out\*.npy')
+    np_files2 = glob.glob(r'D:\data\salt\models\depths\UNetResNetV4_34\edge\*pth_out\*.npy')
+    np_files3 = glob.glob(r'D:\data\salt\models\depths\UNetResNetV6_34\edge\*pth_out\*.npy')
+    np_files = np_files1+np_files2+np_files3
+    #np_files = 
     print(np_files)
     ensemble_np(args, np_files)
 
@@ -181,10 +182,10 @@ if __name__ == '__main__':
     parser.add_argument('--pad_mode', required=True, choices=['reflect', 'edge', 'resize'], help='pad method')
     parser.add_argument('--exp_name', default='depths', type=str, help='exp name')
     parser.add_argument('--meta_version', default=1, type=int, help='meta version')
-    parser.add_argument('--sub_file', default='UNet8_resize_ensemble_1.csv', type=str, help='submission file')
+    parser.add_argument('--sub_file', default='V456_ensemble_1011_2.csv', type=str, help='submission file')
 
     args = parser.parse_args()
 
-    #predict_model(args)
+    predict_model(args)
     #ensemble_predict(args)
-    ensemble_np_results(args)
+    #ensemble_np_results(args)
