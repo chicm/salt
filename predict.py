@@ -88,7 +88,7 @@ def ensemble(args, model, checkpoints):
     submission = create_submission(meta, y_pred_test)
     submission.to_csv(args.sub_file, index=None, encoding='utf-8')
 
-def ensemble_np(args, np_files):
+def ensemble_np(args, np_files, save_np=None):
     preds = []
     for np_file in np_files:
         pred = np.load(np_file)
@@ -96,6 +96,9 @@ def ensemble_np(args, np_files):
         preds.append(pred)
 
     y_pred_test = generate_preds_softmax(np.mean(preds, 0), (settings.ORIG_H, settings.ORIG_W), args.pad_mode)
+
+    if save_np is not None:
+        np.save(save_np, np.mean(preds, 0))
 
     meta = get_test_loader(args.batch_size, index=0, dev_mode=False, pad_mode=args.pad_mode).meta
 
@@ -138,7 +141,13 @@ def ensemble_predict(args):
     #    r'D:\data\salt\models\depths\UNetResNetV4_34\edge\best_3.pth'
     #]
 
-    checkpoints= glob.glob(r'D:\data\salt\models\depths\UNetResNetV4_34\edge\best*.pth')
+    #checkpoints= glob.glob(r'D:\data\salt\models\pseudo\UNetResNetV4_34\edge\best*.pth')
+    checkpoints = [
+        r'D:\data\salt\models\pseudo\UNetResNetV4_34\edge\best_5.pth', 
+        r'D:\data\salt\models\pseudo\UNetResNetV4_34\edge\best_6.pth',
+        r'D:\data\salt\models\pseudo\UNetResNetV4_34\edge\best_8.pth',
+        r'D:\data\salt\models\pseudo\UNetResNetV4_34\edge\best_9.pth'
+    ]
     print(checkpoints)
     #ensemble(checkpoints)
 
@@ -148,10 +157,13 @@ def ensemble_np_results(args):
     np_files1 = glob.glob(r'D:\data\salt\models\depths\UNetResNetV5_50\edge\*pth_out\*.npy')
     np_files2 = glob.glob(r'D:\data\salt\models\depths\UNetResNetV4_34\edge\*pth_out\*.npy')
     np_files3 = glob.glob(r'D:\data\salt\models\depths\UNetResNetV6_34\edge\*pth_out\*.npy')
-    np_files = np_files1+np_files2+np_files3
+    #np_files4 = glob.glob(r'D:\data\salt\models\pseudo\UNetResNetV4_34\edge\*pth_out\*.npy')
+    #np_files5 = glob.glob(r'D:\data\salt\models\pseudo\UNetResNetV6_34\edge\*pth_out\*.npy')
+    np_files6 = glob.glob(r'D:\data\salt\models\ensemble\*.npy')
+    np_files = np_files6 #np_files1 + np_files2 + np_files3 #+ np_files4 + np_files5
     #np_files = 
     print(np_files)
-    ensemble_np(args, np_files)
+    ensemble_np(args, np_files) #, save_np=os.path.join(settings.MODEL_DIR, 'ensemble', 'v456_lb864.npy'))
 
 def predict_model(args):
     model = eval(args.model_name)(args.layers, num_filters=args.nf)
@@ -182,10 +194,10 @@ if __name__ == '__main__':
     parser.add_argument('--pad_mode', required=True, choices=['reflect', 'edge', 'resize'], help='pad method')
     parser.add_argument('--exp_name', default='depths', type=str, help='exp name')
     parser.add_argument('--meta_version', default=1, type=int, help='meta version')
-    parser.add_argument('--sub_file', default='V456_ensemble_1011_2.csv', type=str, help='submission file')
+    parser.add_argument('--sub_file', default='all_ensemble.csv', type=str, help='submission file')
 
     args = parser.parse_args()
 
-    predict_model(args)
+    #predict_model(args)
     #ensemble_predict(args)
-    #ensemble_np_results(args)
+    ensemble_np_results(args)
