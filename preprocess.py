@@ -8,7 +8,6 @@ from keras.preprocessing.image import load_img
 from sklearn.model_selection import StratifiedKFold
 import settings
 import utils
-from unet_models import UNetResNet
 
 DATA_DIR = settings.DATA_DIR
 
@@ -19,30 +18,6 @@ def prepare_metadata():
                                    depths_filepath=settings.DEPTHS_FILE
                                    )
     meta.to_csv(settings.META_FILE, index=None)
-
-def convert_model():
-    model = UNetResNet(152, 2, pretrained=True, is_deconv=True)
-    model = nn.DataParallel(model)
-    old_model_file = os.path.join(settings.MODEL_DIR, 'old', '152', 'best_814_elu.pth')
-    new_model_file = os.path.join(settings.MODEL_DIR, '152', 'best_814_elu.pth')
-    
-    print('loading... {}'.format(old_model_file))
-    model.load_state_dict(torch.load(old_model_file))
-    
-    print('saving... {}'.format(new_model_file))
-    torch.save(model.module.state_dict(), new_model_file)
-
-def convert_model2():
-    model = UNetResNet(152, 2, pretrained=True, is_deconv=True)
-    model.classifier = None
-    old_model_file = os.path.join(settings.MODEL_DIR, '152', 'best_814_elu.pth')
-    model.load_state_dict(torch.load(old_model_file))
-
-    model.final = nn.Conv2d(32, 1, kernel_size=1)
-    model.classifier =  nn.Linear(32 * 256 * 256, 1)
-
-    new_model_file = os.path.join(settings.MODEL_DIR, '152_new', 'best_814.pth')
-    torch.save(model.state_dict(), new_model_file)
 
 def cov_to_class(val):    
     for i in range(0, 11):
@@ -74,6 +49,8 @@ def generate_stratified_metadata():
     with open(os.path.join(settings.DATA_DIR, 'train_split.json'), 'w') as f:
         json.dump(train_splits, f, indent=4)
 
+    print('done')
+
 
 def test():
     meta = pd.read_csv(settings.META_FILE)
@@ -93,7 +70,6 @@ def test():
 
 if __name__ == '__main__':
     #prepare_metadata()
-    #test()
     #convert_model2()
     #get_mask_existence()
     generate_stratified_metadata()

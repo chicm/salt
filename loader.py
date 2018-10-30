@@ -5,11 +5,9 @@ from PIL import Image
 import torch
 import torch.utils.data as data
 from torchvision import datasets, models, transforms
-from settings import *
-from utils import get_train_split, ImgAug, from_pil, to_pil, read_masks, get_test_meta, get_nfold_split
+from utils import get_train_split, read_masks, get_test_meta, get_nfold_split
 import augmentation as aug
-
-import pdb
+from settings import *
 
 class ImageDataset(data.Dataset):
     def __init__(self, train_mode, meta, augment_with_target=None,
@@ -23,20 +21,14 @@ class ImageDataset(data.Dataset):
         self.meta = meta
     
         self.img_ids = meta[ID_COLUMN].values
-        self.img_filenames = meta[X_COLUMN].values
         self.salt_exists = meta['salt_exists'].values
         self.is_train = meta['is_train'].values
         
         if self.train_mode:
             self.mask_filenames = meta[Y_COLUMN].values
-        
-        self.transform = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-        ])
 
     def __getitem__(self, index):
-        base_img_fn = self.img_filenames[index].split('\\')[-1]
+        base_img_fn = '{}.png'.format(self.img_ids[index])
         if self.is_train[index]: #self.train_mode:
             img_fn = os.path.join(TRAIN_IMG_DIR, base_img_fn)
         else:
@@ -44,7 +36,6 @@ class ImageDataset(data.Dataset):
         img = self.load_image(img_fn)
 
         if self.train_mode:
-            #base_mask_fn = self.mask_filenames[index].split('\\')[-1]
             base_mask_fn = '{}.png'.format(self.img_ids[index])
             if self.is_train[index]:
                 mask_fn = os.path.join(TRAIN_MASK_DIR, base_mask_fn)
@@ -59,31 +50,21 @@ class ImageDataset(data.Dataset):
 
     def aug_image(self, img, mask=None):
         if mask is not None:
-            Xi, Mi = from_pil(img, mask)
-            #print('>>>', Xi.shape, Mi.shape)
-            #print(Mi)
             if self.augment_with_target is not None:
-                Xi, Mi = self.augment_with_target(Xi, Mi)
+                img, mask = self.augment_with_target(img, mask)
             if self.image_augment is not None:
-                Xi = self.image_augment(Xi)
-            Xi, Mi = to_pil(Xi, Mi)
-
+                img = self.image_augment(img)
             if self.mask_transform is not None:
-                Mi = self.mask_transform(Mi)
-
+                mask = self.mask_transform(mask)
             if self.image_transform is not None:
-                Xi = self.image_transform(Xi)
-
-            return Xi, Mi#torch.cat(Mi, dim=0)
+                img = self.image_transform(img)
+            return img, mask
         else:
-            Xi = from_pil(img)
             if self.image_augment is not None:
-                Xi = self.image_augment(Xi)
-            Xi = to_pil(Xi)
-
+                img = self.image_augment(img)
             if self.image_transform is not None:
-                Xi = self.image_transform(Xi)
-            return Xi
+                img = self.image_transform(img)
+            return img
 
     def load_image(self, img_filepath, grayscale=False):
         image = Image.open(img_filepath, 'r')
@@ -91,10 +72,6 @@ class ImageDataset(data.Dataset):
             image = image.convert('RGB')
         else:
             image = image.convert('L').point(lambda x: 0 if x < 128 else 1, 'L')
-            #image = np.asarray(image) #.convert('L')
-            #print(np.max(image))
-            #print(image)
-            #pass
         return image
 
     def __len__(self):
@@ -102,7 +79,6 @@ class ImageDataset(data.Dataset):
 
     def collate_fn(self, batch):
         imgs = [x[0] for x in batch]
-        #pdb.set_trace()
         inputs = torch.stack(imgs)
 
         if self.train_mode:
@@ -114,17 +90,11 @@ class ImageDataset(data.Dataset):
         else:
             return inputs
 
-def to_array(x):
-    x_ = x.convert('L')  # convert image to monochrome
-    x_ = np.array(x_)
-    x_ = x_.astype(np.float32)
-    return x_
-
-
-def to_tensor(x):
-    x_ = np.expand_dims(x, axis=0)
-    x_ = torch.from_numpy(x_)
-    return x_
+def mask_to_tensor(x):
+    x = np.array(x).astype(np.float32)
+    x = np.expand_dims(x, axis=0)
+    x = torch.from_numpy(x)
+    return x
 
 img_transforms = [
     transforms.Grayscale(num_output_channels=3),
@@ -155,20 +125,40 @@ def get_mask_transform(pad_mode):
         return transforms.Compose(
             [
                 transforms.Resize((H, W)),
-                transforms.Lambda(to_array),
-                transforms.Lambda(to_tensor),
+                transforms.Lambda(mask_to_tensor),
             ]
         )
     else:
         return transforms.Compose(
             [
-                transforms.Lambda(to_array),
-                transforms.Lambda(to_tensor),
+                transforms.Lambda(mask_to_tensor),
             ]
         )
 
-def get_train_loaders(ifold, batch_size=8, dev_mode=False, pad_mode='edge', meta_version=1, pseudo_label=False):
-    #pdb.set_trace()
+def get_img_mask_augments(pad_mode, depths_channel=False):
+    if depths_channel:
+        affine_aug = aug.RandomAffineWithMask(5, translate=(0.1, 0.), scale=(0.9, 1.1), shear=None)
+    else:
+        affine_aug = aug.RandomAffineWithMask(15, translate=(0.1, 0.1), scale=(0.9, 1.1), shear=None)
+
+    if pad_mode == 'resize':
+        img_mask_aug_train = aug.Compose([
+            aug.RandomHFlipWithMask(),
+            affine_aug
+        ])
+        img_mask_aug_val = None
+    else:
+        img_mask_aug_train = aug.Compose([
+            aug.PadWithMask((28, 28), padding_mode=pad_mode),
+            aug.RandomHFlipWithMask(),
+            affine_aug,
+            aug.RandomResizedCropWithMask(H, scale=(1., 1.), ratio=(1., 1.))
+        ])
+        img_mask_aug_val = aug.PadWithMask((13, 13, 14, 14), padding_mode=pad_mode)
+
+    return img_mask_aug_train, img_mask_aug_val
+
+def get_train_loaders(ifold, batch_size=8, dev_mode=False, pad_mode='edge', meta_version=1, pseudo_label=False, depths=False):
     train_shuffle = True
     train_meta, val_meta = get_nfold_split(ifold, nfold=10, meta_version=meta_version)
 
@@ -183,17 +173,11 @@ def get_train_loaders(ifold, batch_size=8, dev_mode=False, pad_mode='edge', meta
     #print(val_meta[X_COLUMN].values[:5])
     #print(val_meta[Y_COLUMN].values[:5])
     print(train_meta.shape, val_meta.shape)
-
-    if pad_mode == 'resize':
-        img_mask_aug_train = ImgAug(aug.get_affine_seq_depths('edge'))
-        img_mask_aug_val = None
-    else:
-        img_mask_aug_train = ImgAug(aug.crop_seq(crop_size=(H, W), pad_size=(28,28), pad_method=pad_mode))
-        img_mask_aug_val = ImgAug(aug.pad_to_fit_net(64, pad_mode))
+    img_mask_aug_train, img_mask_aug_val = get_img_mask_augments(pad_mode, depths)
 
     train_set = ImageDataset(True, train_meta,
                             augment_with_target=img_mask_aug_train,
-                            image_augment=ImgAug(aug.brightness_seq),
+                            image_augment=transforms.ColorJitter(0.2, 0.2, 0.2, 0.2),
                             image_transform=get_image_transform(pad_mode),
                             mask_transform=get_mask_transform(pad_mode))
 
@@ -202,12 +186,12 @@ def get_train_loaders(ifold, batch_size=8, dev_mode=False, pad_mode='edge', meta
 
     val_set = ImageDataset(True, val_meta,
                             augment_with_target=img_mask_aug_val,
-                            image_augment=None, #ImgAug(aug.pad_to_fit_net(64, 'reflect')),
+                            image_augment=None, 
                             image_transform=get_image_transform(pad_mode),
                             mask_transform=get_mask_transform(pad_mode))
     val_loader = data.DataLoader(val_set, batch_size=batch_size, shuffle=False, num_workers=4, collate_fn=val_set.collate_fn)
     val_loader.num = len(val_set)
-    val_loader.y_true = read_masks(val_meta[Y_COLUMN].values)
+    val_loader.y_true = read_masks(val_meta[ID_COLUMN].values)
 
     return train_loader, val_loader
 
@@ -216,7 +200,7 @@ def get_test_loader(batch_size=16, index=0, dev_mode=False, pad_mode='edge'):
     if dev_mode:
         test_meta = test_meta.iloc[:10]
     test_set = ImageDataset(False, test_meta,
-                            image_augment=None if pad_mode == 'resize' else ImgAug(aug.pad_to_fit_net(64, pad_mode)),
+                            image_augment=None if pad_mode == 'resize' else transforms.Pad((13,13,14,14), padding_mode=pad_mode), 
                             image_transform=get_tta_transforms(index, pad_mode))
     test_loader = data.DataLoader(test_set, batch_size=batch_size, shuffle=False, num_workers=4, collate_fn=test_set.collate_fn, drop_last=False)
     test_loader.num = len(test_set)
@@ -257,7 +241,7 @@ def add_depth_channel(img_tensor, pad_mode):
 
 
 def test_train_loader():
-    train_loader, val_loader = get_train_loaders(1, batch_size=4, dev_mode=False, pad_mode='resize', meta_version=2, pseudo_label=True)
+    train_loader, val_loader = get_train_loaders(1, batch_size=4, dev_mode=False, pad_mode='edge', meta_version=2, pseudo_label=True)
     print(train_loader.num, val_loader.num)
     for i, data in enumerate(train_loader):
         imgs, masks, salt_exists = data
@@ -265,6 +249,7 @@ def test_train_loader():
         print(imgs.size(), masks.size(), salt_exists.size())
         print(salt_exists)
         add_depth_channel(imgs, 'resize')
+        print(masks)
         break
         #print(imgs)
         #print(masks)
@@ -278,8 +263,8 @@ def test_test_loader():
             break
 
 if __name__ == '__main__':
-    #test_test_loader()
-    test_train_loader()
+    test_test_loader()
+    #test_train_loader()
     #small_dict, img_ids = load_small_train_ids()
     #print(img_ids[:10])
     #print(get_tta_transforms(3, 'edge'))

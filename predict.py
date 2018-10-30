@@ -8,9 +8,8 @@ import torch.nn.functional as F
 
 import settings
 from loader import get_test_loader, add_depth_channel
-from unet_models import UNetResNet
-from unet_new import UNetResNetV4, UNetResNetV5, UNetResNetV6, UNet7, UNet8
-from postprocessing import crop_image, binarize, crop_image_softmax, resize_image
+from models import UNetResNetV4, UNetResNetV5, UNetResNetV6, UNet7, UNet8
+from postprocessing import crop_image, binarize, resize_image
 from metrics import intersection_over_union, intersection_over_union_thresholds
 from utils import create_submission
 
@@ -66,7 +65,7 @@ def predict(args, model, checkpoint, out_file):
     print('predicting {}...'.format(checkpoint))
     pred, meta = do_tta_predict(args, model, checkpoint, tta_num=2)
     print(pred.shape)
-    y_pred_test = generate_preds_softmax(pred, (settings.ORIG_H, settings.ORIG_W), pad_mode=args.pad_mode)
+    y_pred_test = generate_preds(pred, (settings.ORIG_H, settings.ORIG_W), pad_mode=args.pad_mode)
 
     submission = create_submission(meta, y_pred_test)
     submission.to_csv(out_file, index=None, encoding='utf-8')
@@ -83,7 +82,7 @@ def ensemble(args, model, checkpoints):
         pred, meta = do_tta_predict(args, model, checkpoint, tta_num=2)
         preds.append(pred)
 
-    y_pred_test = generate_preds_softmax(np.mean(preds, 0), (settings.ORIG_H, settings.ORIG_W), args.pad_mode)
+    y_pred_test = generate_preds(np.mean(preds, 0), (settings.ORIG_H, settings.ORIG_W), args.pad_mode)
 
     submission = create_submission(meta, y_pred_test)
     submission.to_csv(args.sub_file, index=None, encoding='utf-8')
@@ -95,7 +94,7 @@ def ensemble_np(args, np_files, save_np=None):
         print(np_file, pred.shape)
         preds.append(pred)
 
-    y_pred_test = generate_preds_softmax(np.mean(preds, 0), (settings.ORIG_H, settings.ORIG_W), args.pad_mode)
+    y_pred_test = generate_preds(np.mean(preds, 0), (settings.ORIG_H, settings.ORIG_W), args.pad_mode)
 
     if save_np is not None:
         np.save(save_np, np.mean(preds, 0))
@@ -106,7 +105,7 @@ def ensemble_np(args, np_files, save_np=None):
     #submission_filepath = 'v4_1378.csv'
     submission.to_csv(args.sub_file, index=None, encoding='utf-8')
 
-def generate_preds_softmax(outputs, target_size, pad_mode, threshold=0.5):
+def generate_preds(outputs, target_size, pad_mode, threshold=0.5):
     preds = []
 
     for output in outputs:
@@ -193,11 +192,11 @@ if __name__ == '__main__':
     parser.add_argument('--batch_size', default=32, type=int, help='batch_size')
     parser.add_argument('--pad_mode', required=True, choices=['reflect', 'edge', 'resize'], help='pad method')
     parser.add_argument('--exp_name', default='depths', type=str, help='exp name')
-    parser.add_argument('--meta_version', default=1, type=int, help='meta version')
+    parser.add_argument('--meta_version', default=2, type=int, help='meta version')
     parser.add_argument('--sub_file', default='all_ensemble.csv', type=str, help='submission file')
 
     args = parser.parse_args()
 
-    #predict_model(args)
+    predict_model(args)
     #ensemble_predict(args)
-    ensemble_np_results(args)
+    #ensemble_np_results(args)
