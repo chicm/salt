@@ -5,7 +5,7 @@ from PIL import Image
 import torch
 import torch.utils.data as data
 from torchvision import datasets, models, transforms
-from utils import get_train_split, read_masks, get_test_meta, get_nfold_split
+from utils import read_masks, get_test_meta, get_nfold_split
 import augmentation as aug
 from settings import *
 

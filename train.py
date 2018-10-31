@@ -212,7 +212,7 @@ if __name__ == '__main__':
     parser.add_argument('--factor', default=0.5, type=float, help='lr scheduler factor')
     parser.add_argument('--t_max', default=15, type=int, help='lr scheduler patience')
     parser.add_argument('--pad_mode', default='edge', choices=['reflect', 'edge', 'resize'], help='pad method')
-    parser.add_argument('--exp_name', default='depths', type=str, help='exp name')
+    parser.add_argument('--exp_name', default=None, type=str, help='exp name')
     parser.add_argument('--model_name', default='UNetResNetV4', type=str, help='')
     parser.add_argument('--init_ckp', default=None, type=str, help='resume from checkpoint path')
     parser.add_argument('--val', action='store_true')

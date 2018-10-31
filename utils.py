@@ -9,7 +9,7 @@ import pandas as pd
 from PIL import Image
 from tqdm import tqdm
 from pycocotools import mask as cocomask
-from sklearn.model_selection import BaseCrossValidator, KFold
+from sklearn.model_selection import KFold
 
 import settings
 
@@ -38,7 +38,6 @@ def read_masks(img_ids):
 
 
 def run_length_encoding(x):
-    # https://www.kaggle.com/c/data-science-bowl-2018/discussion/48561#
     bs = np.where(x.T.flatten())[0]
 
     rle = []
@@ -51,16 +50,6 @@ def run_length_encoding(x):
 
 
 def run_length_decoding(mask_rle, shape):
-    """
-    Based on https://www.kaggle.com/msl23518/visualize-the-stage1-test-solution and modified
-    Args:
-        mask_rle: run-length as string formatted (start length)
-        shape: (height, width) of array to return
-
-    Returns:
-        numpy array, 1 - mask, 0 - background
-
-    """
     s = mask_rle.split()
     starts, lengths = [np.asarray(x, dtype=int) for x in (s[0:][::2], s[1:][::2])]
     starts -= 1
@@ -137,39 +126,6 @@ def get_crop_pad_sequence(vertical, horizontal):
     left = horizontal - right
     return (top, right, bottom, left)
 
-
-class KFoldBySortedValue(BaseCrossValidator):
-    def __init__(self, n_splits=5, shuffle=False, random_state=None):
-        self.n_splits = n_splits
-        self.shuffle = shuffle
-        self.random_state = random_state
-
-    def _iter_test_indices(self, X, y=None, groups=None):
-        n_samples = X.shape[0]
-        indices = np.arange(n_samples)
-
-        sorted_idx_vals = sorted(zip(indices, X), key=lambda x: x[1])
-        indices = [idx for idx, val in sorted_idx_vals]
-
-        for split_start in range(self.n_splits):
-            split_indeces = indices[split_start::self.n_splits]
-            yield split_indeces
-
-    def get_n_splits(self, X=None, y=None, groups=None):
-        return self.n_splits
-
-def get_train_split():
-    meta = pd.read_csv(settings.META_FILE, na_filter=False)
-    meta_train = meta[meta['is_train'] == 1]
-    print(meta.head())
-
-    cv = KFoldBySortedValue()
-    for train_idx, valid_idx in cv.split(meta_train[settings.DEPTH_COLUMN].values.reshape(-1)):
-        print(len(train_idx), len(valid_idx))
-        #break
-
-    meta_train_split, meta_valid_split = meta_train.iloc[train_idx], meta_train.iloc[valid_idx]
-    return meta_train_split, meta_valid_split
 
 def get_nfold_split(ifold, nfold=10, meta_version=1):
     if meta_version == 2:
